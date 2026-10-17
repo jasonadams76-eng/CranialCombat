@@ -3,11 +3,13 @@ const CONFIG = {
   apiUrl: "https://opentdb.com/api.php",
   categoriesUrl: "https://opentdb.com/api_category.php",
 
+  // Points per correct answer. With 5 questions per round, 5 x (25 + 75 + 100) = 1000.
   questionsPerRound: 5,
+  targetTotal: 1000,       // a perfect game; main.js warns if the settings above stop adding up to this
   rounds: [
-    { name: "Easy",   difficulty: "easy",   points: 5  },
-    { name: "Medium", difficulty: "medium", points: 10 },
-    { name: "Hard",   difficulty: "hard",   points: 20 },
+    { name: "Easy",   difficulty: "easy",   points: 25  },
+    { name: "Medium", difficulty: "medium", points: 75  },
+    { name: "Hard",   difficulty: "hard",   points: 100 },
   ],
 
   questionSeconds: 10,     // time limit per question

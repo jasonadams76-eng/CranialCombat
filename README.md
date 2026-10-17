@@ -8,16 +8,18 @@ A multiplayer browser trivia game powered by the [Open Trivia DB](https://opentd
 2. **Players** open the game, enter the code and a name.
 3. The host starts the game. Everyone gets the same questions: **3 rounds of 5**.
 
-| Round | Difficulty | Points per correct answer |
-|-------|-----------|---------------------------|
-| 1 | Easy | 5 |
-| 2 | Medium | 10 |
-| 3 | Hard | 20 |
+| Round | Difficulty | Points per correct answer | Round total |
+|-------|-----------|---------------------------|-------------|
+| 1 | Easy | 25 | 125 |
+| 2 | Medium | 75 | 375 |
+| 3 | Hard | 100 | 500 |
+
+A perfect game scores exactly **1000** points.
 
 - Each question has a **10 second** timer. It ends early once everyone has answered. No answer scores 0.
 - After every question everyone sees the correct answer and the **updated standings**.
 - At the end there is a final leaderboard with a per-round breakdown. The host can start another game with the same players.
-- Max score: 175. Up to 8 players.
+- Up to 8 players.
 
 ## Running it
 
@@ -60,7 +62,7 @@ Edit `js/config.js` to change the timer, reveal and round-break lengths, points 
 node tests/host-game.test.js
 ```
 
-Covers lobby rules, scoring per round, the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again. No dependencies needed.
+Covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again. No dependencies needed.
 
 ## Notes and limits
 

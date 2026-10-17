@@ -222,6 +222,14 @@ function startJoining(rawCode, rawName) {
 }
 
 // ---------- start ----------
+// A perfect game should equal CONFIG.targetTotal. Warn if the settings drift.
+(function checkScoring() {
+  const total = CONFIG.rounds.reduce((sum, r) => sum + r.points * CONFIG.questionsPerRound, 0);
+  if (total !== CONFIG.targetTotal) {
+    console.warn(`Scoring adds up to ${total}, but CONFIG.targetTotal is ${CONFIG.targetTotal}.`);
+  }
+})();
+
 // A link like  .../index.html#K7QX  opens the join screen with the code filled in.
 const hashCode = location.hash.replace("#", "").trim().toUpperCase();
 if (hashCode.length === CONFIG.codeLength) showJoinSetup(hashCode);

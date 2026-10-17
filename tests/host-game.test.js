@@ -79,7 +79,7 @@ test("question message never reveals the correct answer", () => {
   assert.strictEqual(q.category, "Cat0");
 });
 
-test("scoring: 5 / 10 / 20 points by round, wrong and missing answers score 0", () => {
+test("scoring: 25 / 75 / 100 points by round (1000 total), wrong and missing answers score 0", () => {
   const { game, last, timers } = setup();
   game.addPlayer("a", "A"); game.addPlayer("b", "B"); game.addPlayer("c", "C");
   game.lock("x"); game.begin(makeQuestions());
@@ -105,10 +105,17 @@ test("scoring: 5 / 10 / 20 points by round, wrong and missing answers score 0", 
   assert.strictEqual(game.getPhase(), "over");
   const over = last("gameOver");
   const a = over.standings.find(s => s.id === "a");
-  assert.strictEqual(a.score, 5 * 5 + 5 * 10 + 5 * 20);       // 175
-  same(a.roundScores, [25, 50, 100]);
+  assert.strictEqual(a.score, 1000);
+  same(a.roundScores, [125, 375, 500]);
   assert.strictEqual(a.rank, 1);
   assert.strictEqual(over.standings.find(s => s.id === "b").score, 0);
+});
+
+test("scoring: a perfect game adds up to exactly CONFIG.targetTotal (1000)", () => {
+  const total = CONFIG.rounds.reduce((s, r) => s + r.points * CONFIG.questionsPerRound, 0);
+  assert.strictEqual(total, 1000);
+  assert.strictEqual(total, CONFIG.targetTotal);
+  same(CONFIG.rounds.map(r => r.points), [25, 75, 100]);
 });
 
 test("question closes early when every connected player has answered", () => {
@@ -136,7 +143,7 @@ test("answers: only first counts, invalid / stale / late ones are ignored", () =
   assert.strictEqual(game.submitAnswer("zzz", q.id, 0), false);              // unknown player
   timers.advance(10000);
   assert.strictEqual(game.submitAnswer("b", q.id, 0), false);                // after time is up
-  assert.strictEqual(last("reveal").results.find(r => r.id === "a").gained, 5);
+  assert.strictEqual(last("reveal").results.find(r => r.id === "a").gained, 25);
 });
 
 test("disconnect mid-question: game does not wait for the player who left", () => {
@@ -165,7 +172,7 @@ test("standings: ranked by score, ties share a rank, gained shown", () => {
   game.submitAnswer("a", q.id, (right + 1) % 4);
   const st = last("reveal").standings;
   same(st.map(s => [s.id, s.rank, s.score, s.gained]),
-    [["b", 1, 5, 5], ["c", 1, 5, 5], ["a", 3, 0, 0]]);
+    [["b", 1, 25, 25], ["c", 1, 25, 25], ["a", 3, 0, 0]]);
 });
 
 test("round break shows standings and announces the next round", () => {
@@ -176,7 +183,7 @@ test("round break shows standings and announces the next round", () => {
   const rb = last("roundEnd");
   assert.strictEqual(rb.roundName, "Easy");
   assert.strictEqual(rb.nextRoundName, "Medium");
-  assert.strictEqual(rb.nextPoints, 10);
+  assert.strictEqual(rb.nextPoints, 75);
   assert.strictEqual(last("question").roundName, "Easy");     // not started yet
   timers.advance(6000);
   assert.strictEqual(last("question").roundName, "Medium");
