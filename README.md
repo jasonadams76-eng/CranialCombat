@@ -34,11 +34,12 @@ index.html        page shell (loads PeerJS from a CDN, version pinned)
 css/styles.css    styling
 js/config.js      rounds, points, timers, player limit, join-code settings
 js/api.js         OpenTDB: category list and question fetching (host only)
+js/names.js       player-name filter (blocked words, disguises, links, reserved names)
 js/game.js        host rules engine: players, timer, scoring, standings (no DOM, no network)
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
 js/ui.js          all screens and click handling
 js/main.js        wires UI, network and engine together
-tests/            node tests for the rules engine
+tests/            node tests for the rules engine and the name filter
 ```
 
 Scripts are plain `<script>` tags loaded in the order above; each file uses globals from the ones before it.
@@ -52,6 +53,12 @@ Scripts are plain `<script>` tags loaded in the order above; each file uses glob
 - If the **host** leaves, the game ends for everyone.
 - Joining closes once the game starts.
 
+## Player names
+
+Names are checked on the host and join screens, and again by the host's game engine, so a modified client can't skip the check. Blocked: profanity, sexual terms, slurs and hate terms, threats and self-harm phrases, links / e-mail addresses / phone-number-like strings, invisible or direction-flipping characters, and names that pose as the game or its staff (such as "Host" or "Admin"). Common disguises are handled (`sh1t`, `f u c k`, `fuuuck`, look-alike letters). A rejected name just gets "Please choose a different name." and never says which word matched.
+
+No word filter is perfect: unusual spellings and other languages can slip through, and a rare innocent name may be blocked. The lists are plain arrays at the top of `js/names.js`, so they are easy to adjust. Mild words such as "hell" and "damn" are blocked too; remove them from the list if you want a more relaxed game.
+
 ## Settings
 
 Edit `js/config.js` to change the timer, reveal and round-break lengths, points per round, questions per round, or the maximum number of players.
@@ -60,9 +67,10 @@ Edit `js/config.js` to change the timer, reveal and round-break lengths, points 
 
 ```
 node tests/host-game.test.js
+node tests/names.test.js
 ```
 
-Covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again. No dependencies needed.
+The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again. The second checks that disguised bad names are blocked and that innocent ones (Scunthorpe, Dickinson, Cassie, Hancock, and so on) are not. No dependencies needed.
 
 ## Notes and limits
 

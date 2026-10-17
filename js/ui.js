@@ -52,12 +52,14 @@ const UI = (() => {
       <h1>Host a Game</h1>
       <label for="name">Your name</label>
       <input id="name" maxlength="${CONFIG.maxNameLength}" autocomplete="off" value="${esc(h.name || "")}">
+      <p class="form-error" id="form-error" role="alert">${esc(h.error || "")}</p>
       <button class="primary" id="create">Create Game</button>
       <button class="secondary" id="back">Back</button>`);
     const go = () => h.onCreate($("name").value);
     $("create").onclick = go;
     $("back").onclick = h.onBack;
     $("name").onkeydown = e => { if (e.key === "Enter") go(); };
+    $("name").oninput = () => formError("");
     $("name").focus();
   }
 
@@ -68,14 +70,22 @@ const UI = (() => {
       <input id="code" class="code-input" maxlength="${CONFIG.codeLength}" autocomplete="off" value="${esc(h.code || "")}">
       <label for="name">Your name</label>
       <input id="name" maxlength="${CONFIG.maxNameLength}" autocomplete="off" value="${esc(h.name || "")}">
+      <p class="form-error" id="form-error" role="alert">${esc(h.error || "")}</p>
       <button class="primary" id="go">Join</button>
       <button class="secondary" id="back">Back</button>`);
     const go = () => h.onJoin($("code").value, $("name").value);
     $("go").onclick = go;
     $("back").onclick = h.onBack;
-    $("code").oninput = e => { e.target.value = e.target.value.toUpperCase(); };
+    $("code").oninput = e => { e.target.value = e.target.value.toUpperCase(); formError(""); };
     $("name").onkeydown = e => { if (e.key === "Enter") go(); };
+    $("name").oninput = () => formError("");
     ($("code").value ? $("name") : $("code")).focus();
+  }
+
+  // Inline message on the host / join forms.
+  function formError(text) {
+    const el = $("form-error");
+    if (el) el.textContent = text;
   }
 
   function connecting(text) {
@@ -271,7 +281,7 @@ const UI = (() => {
   }
 
   return {
-    landing, hostSetup, joinSetup, connecting, loading, message,
+    landing, hostSetup, joinSetup, formError, connecting, loading, message,
     lobby, question, progress, reveal, roundEnd, gameOver,
     isShowing: name => current === name,
   };

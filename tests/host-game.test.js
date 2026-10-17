@@ -4,12 +4,10 @@ const path = require("path");
 const vm = require("vm");
 const assert = require("assert");
 
-const ctx = vm.createContext({ console });
-for (const f of ["config.js", "game.js"]) {
-  const code = fs.readFileSync(path.join(__dirname, "..", "js", f), "utf8");
-  vm.runInContext(code.replace(/^const (\w+) =/m, "var $1 ="), ctx);
-}
-const { CONFIG, HostGame } = ctx;
+// Load the browser scripts into one sandbox, in the same order index.html does.
+const source = ["config.js", "names.js", "game.js"]
+  .map(f => fs.readFileSync(path.join(__dirname, "..", "js", f), "utf8")).join("\n");
+const { CONFIG, HostGame } = vm.runInNewContext(source + "\n;({ CONFIG, HostGame })", { console });
 
 // ----- fake clock -----
 function fakeTimers() {
@@ -59,13 +57,31 @@ test("lobby: joins, unique names, max players, no join after start", () => {
   assert(game.addPlayer("a", "Sam").ok);
   assert(game.addPlayer("b", "sam").ok);
   same(last("lobby").players.map(p => p.name), ["Sam", "sam 2"]);
-  assert(game.addPlayer("c", "   ").ok);
-  assert.strictEqual(last("lobby").players[2].name, "Player");
+  assert.strictEqual(game.addPlayer("c", "   ").ok, false);    // blank names are no longer turned into "Player"
   for (let i = 0; i < 10; i++) game.addPlayer("x" + i, "X");
   assert.strictEqual(game.getPlayers().length, CONFIG.maxPlayers);
   assert.strictEqual(game.addPlayer("late", "Late").ok, false);
   game.lock("loading");
   assert.strictEqual(game.addPlayer("late2", "Late").ok, false);
+});
+
+test("names: blocked and reserved names are refused by the host engine itself", () => {
+  const { game, last } = setup();
+  const r = game.addPlayer("a", "sh1t");
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.code, "name");
+  assert.strictEqual(r.error, "Please choose a different name.");
+  assert.strictEqual(game.addPlayer("b", "Host").ok, false);
+  assert.strictEqual(game.addPlayer("c", "").ok, false);
+  assert.strictEqual(game.getPlayers().length, 0);
+  assert.strictEqual(last("lobby"), undefined);                // nothing was broadcast for refused names
+  assert.strictEqual(game.addPlayer("d", "Scunthorpe").ok, true);
+});
+
+test("names: accepted names are stored cleaned (invisible characters and extra spaces removed)", () => {
+  const { game, last } = setup();
+  game.addPlayer("a", "  Sam\u200B   Smith ");
+  assert.strictEqual(last("lobby").players[0].name, "Sam Smith");
 });
 
 test("question message never reveals the correct answer", () => {

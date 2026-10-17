@@ -14,6 +14,10 @@ const HostGame = (() => {
       revealMs: CONFIG.revealSeconds * 1000,
       roundBreakMs: CONFIG.roundBreakSeconds * 1000,
       broadcast: () => {},
+      // Name filter. The host enforces this even if a player's screen skipped it.
+      nameCheck: n => (typeof NameFilter !== "undefined"
+        ? NameFilter.check(n, { maxLength: CONFIG.maxNameLength })
+        : { ok: true, name: String(n || "").trim().slice(0, CONFIG.maxNameLength) || "Player" }),
       timers: {
         setTimeout: (fn, ms) => setTimeout(fn, ms),
         clearTimeout: id => clearTimeout(id),
@@ -73,8 +77,10 @@ const HostGame = (() => {
       if (phase !== "lobby") return { ok: false, error: "That game has already started." };
       if (find(id)) return { ok: true, player: find(id) };
       if (players.length >= o.maxPlayers) return { ok: false, error: "That game is full." };
+      const checked = o.nameCheck(name);
+      if (!checked.ok) return { ok: false, code: "name", error: checked.message };
       const p = {
-        id, name: uniqueName(name), score: 0,
+        id, name: uniqueName(checked.name), score: 0,
         roundScores: o.rounds.map(() => 0), connected: true,
       };
       players.push(p);

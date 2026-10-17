@@ -37,6 +37,12 @@ function friendlyError(err) {
   }
 }
 
+// The name remembered from last time, unless it wouldn't pass the filter now.
+function savedName() {
+  const n = store.get("tsName");
+  return NameFilter.check(n, { maxLength: CONFIG.maxNameLength }).ok ? n : "";
+}
+
 function teardown() {
   App.leaving = true;
   if (App.engine) App.engine.destroy();
@@ -54,12 +60,12 @@ function home() {
 }
 
 function showHostSetup() {
-  UI.hostSetup({ name: store.get("tsName"), onCreate: startHosting, onBack: home });
+  UI.hostSetup({ name: savedName(), onCreate: startHosting, onBack: home });
 }
 
-function showJoinSetup(code) {
+function showJoinSetup(code, error) {
   UI.joinSetup({
-    code, name: store.get("tsName"),
+    code, error, name: savedName(),
     onJoin: startJoining, onBack: home,
   });
 }
@@ -118,10 +124,14 @@ function handleMessage(msg) {
         onLeave: home,
       });
       break;
-    case "error":
+    case "error": {
+      const code = App.code;
       teardown();
-      UI.message("Can't join", msg.message, "Back", home);
+      // A rejected name goes back to the form so it can be fixed; anything else is a dead end.
+      if (msg.code === "name") showJoinSetup(code, msg.message);
+      else UI.message("Can't join", msg.message, "Back", home);
       break;
+    }
   }
 }
 
@@ -133,8 +143,9 @@ function sendAnswer(choice) {
 
 // ---------- hosting ----------
 function startHosting(rawName) {
-  const name = rawName.trim();
-  if (!name) return;
+  const checked = NameFilter.check(rawName, { maxLength: CONFIG.maxNameLength });
+  if (!checked.ok) { UI.formError(checked.message); return; }
+  const name = checked.name;
   store.set("tsName", name);
   UI.connecting("Creating game…");
 
@@ -163,7 +174,7 @@ function startHosting(rawName) {
       if (msg.t === "join") {
         const res = App.engine.addPlayer(id, msg.name);
         if (!res.ok) {
-          App.net.send(id, { t: "error", message: res.error });
+          App.net.send(id, { t: "error", code: res.code, message: res.error });
           App.net.kick(id);
         } else {
           App.net.send(id, { t: "joined", you: id });
@@ -196,8 +207,10 @@ async function hostBegin() {
 // ---------- joining ----------
 function startJoining(rawCode, rawName) {
   const code = rawCode.trim().toUpperCase();
-  const name = rawName.trim();
-  if (code.length !== CONFIG.codeLength || !name) return;
+  if (code.length !== CONFIG.codeLength) { UI.formError(`Enter the ${CONFIG.codeLength}-letter join code.`); return; }
+  const checked = NameFilter.check(rawName, { maxLength: CONFIG.maxNameLength });
+  if (!checked.ok) { UI.formError(checked.message); return; }
+  const name = checked.name;
   store.set("tsName", name);
   UI.connecting("Joining game…");
 
