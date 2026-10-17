@@ -23,6 +23,12 @@ const CONFIG = {
   maxPlayers: 8,
   maxNameLength: 20,
 
+  // Lobby chat
+  chatMaxLength: 200,
+  chatHistory: 50,         // messages kept for people who join later
+  chatRateCount: 5,        // at most this many messages...
+  chatRateWindowMs: 10000, // ...per this long, per player
+
   // Join codes. Ambiguous characters (0/O, 1/I) are left out.
   codeLength: 4,
   codeAlphabet: "ABCDEFGHJKLMNPQRSTUVWXYZ23456789",

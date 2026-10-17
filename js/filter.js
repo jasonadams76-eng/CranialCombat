@@ -1,11 +1,14 @@
-// Player-name filter. Used on the join/host forms (quick feedback) and again by the
-// host's engine (real enforcement, since a modified client could skip the form check).
+// Text filter for player names and lobby chat. Used on the forms (quick feedback) and again by
+// the host's engine (real enforcement, since a modified client could skip the form check).
 //
-// NameFilter.check(raw) -> { ok: true,  name }            name = cleaned display name
-//                       -> { ok: false, reason, message } reason: "empty" | "blocked"
+// Filter.checkName(raw)    -> { ok: true, name }  |  { ok: false, reason, message }   reason: "empty" | "blocked"
+// Filter.checkMessage(raw) -> { ok: true, text }  |  { ok: false, reason }
+//
+// Names are held to a stricter standard (the whole name is squashed together before matching).
+// Chat is read word by word, so ordinary sentences such as "this hit me" are not caught by accident.
 //
 // No word filter is perfect. The lists below are plain arrays: add or remove entries freely.
-const NameFilter = (() => {
+const Filter = (() => {
   // Matched as WHOLE WORDS (so "Class", "Analise", "Penistone" are fine).
   const WORDS = [
     // profanity / sexual
@@ -25,6 +28,12 @@ const NameFilter = (() => {
     "handjob", "dildo", "jerkoff", "jackoff", "wanker", "asshole", "asswipe", "dumbass", "jackass", "fatass",
     "motherf", "pornhub", "pornstar", "rapist", "pedophile", "paedo", "molest", "hitler", "siegheil",
     "heilhitler", "swastika", "whitepower", "killyourself", "hangyourself",
+  ];
+
+  // Multi-word phrases for chat, matched against the whole message with spaces and symbols removed.
+  // They are long enough that they won't appear by accident across word boundaries.
+  const PHRASES = [
+    "killyourself", "killyourselves", "killurself", "hangyourself", "hangurself", "goandkillyourself",
   ];
 
   // Innocent words that contain a blocked substring. Removed before the substring check.
@@ -70,7 +79,7 @@ const NameFilter = (() => {
     return squeezed(c).some(v => SUBSTRINGS.some(s => v.includes(s)));
   }
 
-  function check(raw, options) {
+  function checkName(raw, options) {
     const maxLength = (options && options.maxLength) || 20;
 
     // 1. Clean up what will be displayed.
@@ -111,5 +120,46 @@ const NameFilter = (() => {
     return { ok: true, name };
   }
 
-  return { check };
+  // ---------- chat messages ----------
+  function tokensBlocked(tokens) {
+    // "f u c k" -> "fuck": also try runs of single letters joined together
+    const joined = [];
+    let run = "";
+    tokens.forEach(t => {
+      if (t.length === 1) run += t;
+      else { if (run.length > 1) joined.push(run); run = ""; }
+    });
+    if (run.length > 1) joined.push(run);
+    // Each word is checked on its own, so letters from neighbouring words never combine into a match.
+    return tokens.concat(joined).some(t => hasBlockedWord([t]) || hasBlockedSubstring(t));
+  }
+
+  function checkMessage(raw, options) {
+    const maxLength = (options && options.maxLength) || 200;
+    const text = Array.from(String(raw == null ? "" : raw)
+      .normalize("NFC").replace(/[\t\n\r\v\f]+/g, " ").replace(INVISIBLE, "").replace(/\s+/g, " ").trim())
+      .slice(0, maxLength).join("").trim();
+    if (!text) return fail("empty");
+
+    // Links, e-mail addresses and phone numbers (10+ digits, spaces / dashes allowed)
+    if (/https?:|www\./i.test(text) || /[a-z0-9]\.(com|net|org|io|gg|co|me|ly|xyz|tv)\b/i.test(text)) return fail("blocked");
+    if (/\S+@\S+\.\S+/.test(text)) return fail("blocked");
+    if (/(?:\d[\s().\-]*){10,}/.test(text)) return fail("blocked");
+
+    const chunks = text.replace(/([a-z])([A-Z])/g, "$1 $2").split(" ");
+    for (const lookalikes of [false, true]) {
+      const tokens = [];
+      chunks.forEach(chunk => {
+        let c = baseForm(chunk);
+        // Plain numbers ("455") must not be turned into letters ("ass"): only map chunks that already contain a letter.
+        if (lookalikes && /\p{L}/u.test(c)) c = mapLookalikes(c);
+        c.split(/[^\p{L}\p{N}]+/u).filter(Boolean).forEach(t => tokens.push(t));
+      });
+      if (tokensBlocked(tokens)) return fail("blocked");
+      if (squeezed(tokens.join("")).some(v => PHRASES.some(p => v.includes(p)))) return fail("blocked");
+    }
+    return { ok: true, text };
+  }
+
+  return { checkName, checkMessage };
 })();

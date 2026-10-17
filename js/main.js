@@ -12,6 +12,7 @@ const App = {
   category: null,    // { id, name } or null for random
   categories: [],
   players: [],
+  chat: [],          // lobby chat messages, oldest first
   note: null,
   lastQuestion: null,
   myScore: 0,
@@ -40,7 +41,7 @@ function friendlyError(err) {
 // The name remembered from last time, unless it wouldn't pass the filter now.
 function savedName() {
   const n = store.get("tsName");
-  return NameFilter.check(n, { maxLength: CONFIG.maxNameLength }).ok ? n : "";
+  return Filter.checkName(n, { maxLength: CONFIG.maxNameLength }).ok ? n : "";
 }
 
 function teardown() {
@@ -49,7 +50,7 @@ function teardown() {
   if (App.net) App.net.close();
   Object.assign(App, {
     mode: null, me: null, net: null, engine: null, code: null, category: null,
-    categories: [], players: [], note: null, lastQuestion: null, myScore: 0,
+    categories: [], players: [], chat: [], note: null, lastQuestion: null, myScore: 0,
   });
 }
 
@@ -80,9 +81,28 @@ function renderLobby() {
       App.category = App.categories.find(c => c.id === id) || null;   // null = random
       App.engine.setMeta({ category: App.category, note: null });
     },
+    chat: App.chat, onChat: sendChat,
     onStart: hostBegin,
     onLeave: home,
   });
+}
+
+// ---------- lobby chat ----------
+// Ids come from the host, so a message that arrives twice (live and again in the history) is shown once.
+function addChat(list) {
+  list.forEach(m => { if (!App.chat.some(x => x.id === m.id)) App.chat.push(m); });
+  App.chat.sort((a, b) => a.id - b.id);
+  if (App.chat.length > 100) App.chat = App.chat.slice(-100);
+  if (UI.isShowing("lobby")) UI.chatUpdate(App.chat, App.me);
+}
+
+function sendChat(text) {
+  if (App.mode === "host") {
+    const res = App.engine.chat("host", text);
+    if (!res.ok && res.error) UI.chatError(res.error);
+  } else {
+    App.net.send({ t: "chat", text });
+  }
 }
 
 // Every message from the host (including the host's own copy) comes through here.
@@ -96,6 +116,18 @@ function handleMessage(msg) {
       App.note = msg.meta.note || null;
       if (App.mode === "client") App.category = msg.meta.category || null;
       renderLobby();
+      break;
+    case "chat":
+      addChat([msg.msg]);
+      break;
+    case "chatHistory":
+      addChat(msg.messages);
+      break;
+    case "chatClear":
+      App.chat = [];
+      break;
+    case "chatError":
+      UI.chatError(msg.message);
       break;
     case "loading":
       UI.loading(msg.message);
@@ -148,7 +180,7 @@ function sendAnswer(choice) {
 
 // ---------- hosting ----------
 function startHosting(rawName) {
-  const checked = NameFilter.check(rawName, { maxLength: CONFIG.maxNameLength });
+  const checked = Filter.checkName(rawName, { maxLength: CONFIG.maxNameLength });
   if (!checked.ok) { UI.formError(checked.message); return; }
   const name = checked.name;
   store.set("tsName", name);
@@ -183,9 +215,13 @@ function startHosting(rawName) {
           App.net.kick(id);
         } else {
           App.net.send(id, { t: "joined", you: id });
+          App.net.send(id, { t: "chatHistory", messages: App.engine.getChat() });
         }
       } else if (msg.t === "answer") {
         App.engine.submitAnswer(id, msg.id, msg.choice);
+      } else if (msg.t === "chat") {
+        const res = App.engine.chat(id, msg.text);
+        if (!res.ok && res.error) App.net.send(id, { t: "chatError", message: res.error });
       }
     },
     onPlayerLeft: id => { if (App.engine) App.engine.removePlayer(id); },
@@ -213,7 +249,7 @@ async function hostBegin() {
 function startJoining(rawCode, rawName) {
   const code = rawCode.trim().toUpperCase();
   if (code.length !== CONFIG.codeLength) { UI.formError(`Enter the ${CONFIG.codeLength}-letter join code.`); return; }
-  const checked = NameFilter.check(rawName, { maxLength: CONFIG.maxNameLength });
+  const checked = Filter.checkName(rawName, { maxLength: CONFIG.maxNameLength });
   if (!checked.ok) { UI.formError(checked.message); return; }
   const name = checked.name;
   store.set("tsName", name);

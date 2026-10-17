@@ -106,7 +106,45 @@ const UI = (() => {
         ${p.id === me ? '<span class="you">you</span>' : ""}</li>`).join("");
   }
 
-  // s: { code, players, me, isHost, category, categories, note, canStart, onCategory, onStart, onLeave }
+  // ---------- lobby chat ----------
+  let chatDraft = "";      // what is typed but not sent, kept when the lobby is redrawn
+  let lastSent = "";       // restored to the box if the host refuses the message
+
+  function chatRender(messages, me) {
+    const log = $("chat-log");
+    if (!log) return;
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    log.textContent = "";
+    messages.forEach(m => {
+      const row = document.createElement("div");
+      if (m.system) {
+        row.className = "msg sys";
+        row.textContent = m.text;
+      } else {
+        row.className = "msg" + (m.from.id === me ? " mine" : "");
+        const who = document.createElement("span");
+        who.className = "who";
+        who.textContent = m.from.name;
+        row.appendChild(who);
+        row.appendChild(document.createTextNode(m.text));      // text only, so nothing typed can become markup
+      }
+      log.appendChild(row);
+    });
+    const last = messages[messages.length - 1];
+    if (nearBottom || (last && last.from && last.from.id === me)) log.scrollTop = log.scrollHeight;
+  }
+
+  function chatUpdate(messages, me) { chatRender(messages, me); }
+
+  function chatError(text) {
+    const el = $("chat-error");
+    if (!el) return;
+    el.textContent = text || "";
+    const input = $("chat-input");
+    if (text && input && !input.value && lastSent) { input.value = lastSent; chatDraft = lastSent; }
+  }
+
+  // s: { code, players, me, isHost, category, categories, note, chat, onCategory, onStart, onChat, onLeave }
   function lobby(s) {
     const link = /^https?:/.test(location.protocol) ? `${location.origin}${location.pathname}#${s.code}` : null;
     const catName = s.category ? s.category.name : "Random (all categories)";
@@ -135,6 +173,15 @@ const UI = (() => {
           : `<div class="code-label">Category</div><div id="lobby-cat" class="cat-name">${esc(catName)}</div>`}
       </div>
       <ul class="players" id="lobby-players">${playersHtml(s.players, s.me)}</ul>
+      <div class="chat">
+        <h2>Chat</h2>
+        <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
+        <form class="chat-form" id="chat-form" autocomplete="off">
+          <input id="chat-input" maxlength="${CONFIG.chatMaxLength}" placeholder="Say something…" aria-label="Chat message">
+          <button type="submit" id="chat-send">Send</button>
+        </form>
+        <p class="form-error" id="chat-error" role="alert"></p>
+      </div>
       <p class="note" id="lobby-note">${esc(s.note || "")}</p>
       ${s.isHost
         ? `<button class="primary" id="start">Start Game</button>`
@@ -147,6 +194,21 @@ const UI = (() => {
       $("start").onclick = s.onStart;
     }
     $("leave").onclick = s.onLeave;
+
+    chatRender(s.chat || [], s.me);
+    const input = $("chat-input");
+    input.value = chatDraft;
+    input.oninput = () => { chatDraft = input.value; chatError(""); };
+    $("chat-form").onsubmit = e => {
+      e.preventDefault();
+      const text = input.value;
+      if (!text.trim()) return;
+      lastSent = text;
+      input.value = "";
+      chatDraft = "";
+      chatError("");
+      s.onChat(text);
+    };
   }
 
   // ---------- question ----------
@@ -285,7 +347,7 @@ const UI = (() => {
 
   return {
     landing, hostSetup, joinSetup, formError, connecting, loading, message,
-    lobby, question, progress, reveal, roundEnd, gameOver,
+    lobby, chatUpdate, chatError, question, progress, reveal, roundEnd, gameOver,
     isShowing: name => current === name,
   };
 })();

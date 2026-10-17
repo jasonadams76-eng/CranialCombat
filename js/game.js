@@ -14,9 +14,17 @@ const HostGame = (() => {
       broadcast: () => {},
       minAdvanceMs: CONFIG.minAdvanceMs,
       now: () => Date.now(),
+      chatMaxLength: CONFIG.chatMaxLength,
+      chatHistory: CONFIG.chatHistory,
+      chatRateCount: CONFIG.chatRateCount,
+      chatRateWindowMs: CONFIG.chatRateWindowMs,
+      // Chat filter. Same word lists as names, read word by word (see js/filter.js).
+      messageCheck: (text, opts) => (typeof Filter !== "undefined"
+        ? Filter.checkMessage(text, opts)
+        : { ok: true, text: String(text || "").trim().slice(0, opts.maxLength) }),
       // Name filter. The host enforces this even if a player's screen skipped it.
-      nameCheck: n => (typeof NameFilter !== "undefined"
-        ? NameFilter.check(n, { maxLength: CONFIG.maxNameLength })
+      nameCheck: n => (typeof Filter !== "undefined"
+        ? Filter.checkName(n, { maxLength: CONFIG.maxNameLength })
         : { ok: true, name: String(n || "").trim().slice(0, CONFIG.maxNameLength) || "Player" }),
       timers: {
         setTimeout: (fn, ms) => setTimeout(fn, ms),
@@ -33,6 +41,9 @@ const HostGame = (() => {
     let timer = null;
     let qSeq = 0;
     let phaseStartedAt = 0;    // when the standings / round scoreboard appeared (see next())
+    let chatLog = [];          // recent lobby chat, kept for people who join later
+    let chatSeq = 0;
+    const chatTimes = new Map();   // playerId -> times of their recent messages (rate limit)
 
     const find = id => players.find(p => p.id === id);
     const connected = () => players.filter(p => p.connected);
@@ -86,15 +97,18 @@ const HostGame = (() => {
       };
       players.push(p);
       sendLobby();
+      systemLine(`${p.name} joined`);
       return { ok: true, player: p };
     }
 
     function removePlayer(id) {
       const p = find(id);
       if (!p) return;
+      chatTimes.delete(id);
       if (phase === "lobby") {
         players = players.filter(x => x.id !== id);
         sendLobby();
+        systemLine(`${p.name} left`);
       } else {
         p.connected = false;
         if (phase === "question") checkAllAnswered();
@@ -126,9 +140,49 @@ const HostGame = (() => {
       sendLobby();
     }
 
+    // ----- lobby chat -----
+    function remember(msg) {
+      chatLog.push(msg);
+      if (chatLog.length > o.chatHistory) chatLog = chatLog.slice(-o.chatHistory);
+      o.broadcast({ t: "chat", msg });
+    }
+
+    function systemLine(text) {
+      remember({ id: ++chatSeq, system: true, text, ts: o.now() });
+    }
+
+    // playerId comes from the connection, never from the message, so nobody can speak as someone else.
+    function chat(playerId, text) {
+      if (phase !== "lobby") return { ok: false, code: "closed", error: "Chat is only open in the lobby." };
+      const p = find(playerId);
+      if (!p || !p.connected) return { ok: false, code: "unknown", error: "You are not in this game." };
+      if (typeof text !== "string" || !text.trim()) return { ok: false, code: "empty" };
+
+      const now = o.now();
+      const recent = (chatTimes.get(playerId) || []).filter(t => now - t < o.chatRateWindowMs);
+      if (recent.length >= o.chatRateCount) {
+        chatTimes.set(playerId, recent);
+        return { ok: false, code: "rate", error: "Slow down a little." };
+      }
+      recent.push(now);                                // blocked attempts count too, so the filter can't be probed quickly
+      chatTimes.set(playerId, recent);
+
+      const checked = o.messageCheck(text, { maxLength: o.chatMaxLength });
+      if (!checked.ok) {
+        return checked.reason === "empty"
+          ? { ok: false, code: "empty" }
+          : { ok: false, code: "filtered", error: "That message wasn't sent. Please keep chat friendly." };
+      }
+      remember({ id: ++chatSeq, from: { id: p.id, name: p.name }, text: checked.text, ts: now });
+      return { ok: true };
+    }
+
     // ----- play -----
     function begin(roundData) {
       if (phase !== "loading" && phase !== "lobby") return false;
+      chatLog = [];
+      chatTimes.clear();
+      o.broadcast({ t: "chatClear" });
       rounds = roundData;
       r = 0; q = 0;
       players.forEach(p => { p.score = 0; p.roundScores = o.rounds.map(() => 0); });
@@ -231,7 +285,8 @@ const HostGame = (() => {
     function destroy() { clearTimer(); }
 
     return {
-      addPlayer, removePlayer, setMeta, lock, unlock, reset, begin, submitAnswer, next, destroy,
+      addPlayer, removePlayer, setMeta, lock, unlock, reset, begin, submitAnswer, next, chat, destroy,
+      getChat: () => chatLog.slice(),
       getPhase: () => phase,
       getPlayers: () => publicPlayers(),
     };

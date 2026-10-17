@@ -5,7 +5,7 @@ const vm = require("vm");
 const assert = require("assert");
 
 // Load the browser scripts into one sandbox, in the same order index.html does.
-const source = ["config.js", "names.js", "game.js"]
+const source = ["config.js", "filter.js", "game.js"]
   .map(f => fs.readFileSync(path.join(__dirname, "..", "js", f), "utf8")).join("\n");
 const { CONFIG, HostGame } = vm.runInNewContext(source + "\n;({ CONFIG, HostGame })", { console });
 
@@ -262,6 +262,108 @@ test("pacing: button labels, double clicks and the final results", () => {
   assert.strictEqual(game.getPhase(), "over");
   const over = last("gameOver");
   same(over.rounds.map(r => r.name), ["Round 1", "Round 2", "Final Round"]);
+});
+
+// ---------------------------------------------------------------- lobby chat
+const chats = log => log.filter(m => m.t === "chat").map(m => m.msg);
+
+test("chat: a message is broadcast with the sender's name taken from the connection", () => {
+  const { game, log, timers } = setup();
+  game.addPlayer("a", "Alice"); game.addPlayer("b", "Bob");
+  const res = game.chat("a", "hello everyone");
+  assert.strictEqual(res.ok, true);
+  const m = chats(log).filter(x => !x.system).pop();
+  assert.strictEqual(m.text, "hello everyone");
+  assert.strictEqual(m.from.id, "a");
+  assert.strictEqual(m.from.name, "Alice");                 // from the player record, not from the message
+  assert.strictEqual(game.chat("zzz", "I am nobody").ok, false);   // unknown sender
+  assert.strictEqual(game.chat("zzz", "I am nobody").code, "unknown");
+});
+
+test("chat: filtered messages are refused with a vague error and never broadcast", () => {
+  const { game, log } = setup();
+  game.addPlayer("a", "Alice");
+  const before = chats(log).length;
+  const r = game.chat("a", "you sh1t");
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.code, "filtered");
+  assert.strictEqual(r.error, "That message wasn't sent. Please keep chat friendly.");
+  assert(!/sh1t/i.test(JSON.stringify(r)));
+  assert.strictEqual(chats(log).length, before);
+  assert.strictEqual(game.chat("a", "this hit me").ok, true);      // innocent sentence still goes through
+});
+
+test("chat: empty messages are ignored and do not count toward the rate limit", () => {
+  const { game, log } = setup();
+  game.addPlayer("a", "Alice");
+  for (let i = 0; i < 20; i++) assert.strictEqual(game.chat("a", "   ").code, "empty");
+  assert.strictEqual(game.chat("a", 42).ok, false);
+  assert.strictEqual(game.chat("a", "still can talk").ok, true);
+});
+
+test("chat: rate limit is 5 messages per 10 seconds per player (blocked attempts count)", () => {
+  const { game, timers } = setup();
+  game.addPlayer("a", "Alice"); game.addPlayer("b", "Bob");
+  assert.strictEqual(game.chat("a", "one").ok, true);
+  assert.strictEqual(game.chat("a", "sh1t").code, "filtered");     // counts as the 2nd attempt
+  for (const w of ["three", "four", "five"]) assert.strictEqual(game.chat("a", w).ok, true);
+  const r = game.chat("a", "six");
+  assert.strictEqual(r.code, "rate");
+  assert.strictEqual(r.error, "Slow down a little.");
+  assert.strictEqual(game.chat("b", "Bob is unaffected").ok, true);
+  timers.advance(10001);
+  assert.strictEqual(game.chat("a", "six again").ok, true);
+});
+
+test("chat: capped at 200 characters", () => {
+  const { game, log } = setup();
+  game.addPlayer("a", "Alice");
+  game.chat("a", "x".repeat(500));
+  assert.strictEqual(chats(log).filter(m => !m.system).pop().text.length, 200);
+});
+
+test("chat: join and leave lines appear, and late joiners can fetch recent history", () => {
+  const { game, log } = setup();
+  game.addPlayer("a", "Alice"); game.addPlayer("b", "Bob");
+  game.chat("a", "hi Bob");
+  game.removePlayer("b");
+  const texts = game.getChat().map(m => m.system ? "[sys] " + m.text : m.from.name + ": " + m.text);
+  same(texts, ["[sys] Alice joined", "[sys] Bob joined", "Alice: hi Bob", "[sys] Bob left"]);
+  const ids = game.getChat().map(m => m.id);
+  assert.strictEqual(new Set(ids).size, ids.length);               // ids are unique so screens can de-duplicate
+});
+
+test("chat: history keeps only the most recent 50 messages", () => {
+  const { game, timers } = setup();
+  game.addPlayer("a", "Alice");
+  for (let i = 0; i < 120; i++) { game.chat("a", "msg " + i); timers.advance(3000); }
+  const h = game.getChat();
+  assert.strictEqual(h.length, 50);
+  assert.strictEqual(h[h.length - 1].text, "msg 119");
+});
+
+test("chat: only open in the lobby; cleared when the game starts; fresh in the next lobby", () => {
+  const { game, log, last, timers } = setup();
+  game.addPlayer("a", "Alice");
+  game.chat("a", "before the game");
+  game.lock("x");
+  assert.strictEqual(game.chat("a", "while loading").code, "closed");
+  game.begin(makeQuestions());
+  assert(log.some(m => m.t === "chatClear"));                      // screens are told to drop the log
+  assert.strictEqual(game.getChat().length, 0);
+  assert.strictEqual(game.chat("a", "during the game").code, "closed");
+  timers.advance(20000);
+  assert.strictEqual(game.chat("a", "on the standings").code, "closed");
+  game.reset();
+  assert.strictEqual(game.getChat().length, 0);                    // rematch lobby starts empty
+  assert.strictEqual(game.chat("a", "back in the lobby").ok, true);
+});
+
+test("chat: a player who left can no longer post", () => {
+  const { game } = setup();
+  game.addPlayer("a", "Alice"); game.addPlayer("b", "Bob");
+  game.removePlayer("b");
+  assert.strictEqual(game.chat("b", "ghost").ok, false);
 });
 
 test("reset: keeps connected players, zeroes scores, returns to lobby", () => {

@@ -35,12 +35,12 @@ index.html        page shell (loads PeerJS from a CDN, version pinned)
 css/styles.css    styling
 js/config.js      rounds, points, timers, player limit, join-code settings
 js/api.js         OpenTDB: category list and question fetching (host only)
-js/names.js       player-name filter (blocked words, disguises, links, reserved names)
+js/filter.js      name and chat filter (blocked words, disguises, links, reserved names)
 js/game.js        host rules engine: players, timer, scoring, standings (no DOM, no network)
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
 js/ui.js          all screens and click handling
 js/main.js        wires UI, network and engine together
-tests/            node tests for the rules engine and the name filter
+tests/            node tests for the rules engine and the filter
 ```
 
 Scripts are plain `<script>` tags loaded in the order above; each file uses globals from the ones before it.
@@ -55,11 +55,21 @@ Scripts are plain `<script>` tags loaded in the order above; each file uses glob
 - If the **host** leaves, the game ends for everyone.
 - Joining closes once the game starts.
 
+## Lobby chat
+
+Everyone in the lobby (including after "Play Again") can chat. It closes when the game starts and starts empty in the next lobby.
+
+- The host checks every message before sharing it, with the same word lists and disguise handling as names. A message that fails is not sent; the sender sees "That message wasn't sent. Please keep chat friendly." and nobody else sees anything. Links, e-mail addresses and phone numbers are blocked too.
+- Chat is read word by word, so sentences like "this hit me" are fine. The trade-off: a word split with spaces inside a word (`fu ck`) can slip through, while single-letter spacing (`f u c k`) is caught.
+- The sender's name comes from their connection, so nobody can post as someone else. Messages are limited to 200 characters and 5 per 10 seconds per player ("Slow down a little."). Blocked attempts count toward that limit.
+- "Bob joined" / "Bob left" lines appear, and people who join late see the last 50 messages.
+- Messages are shown as plain text, never as HTML.
+
 ## Player names
 
 Names are checked on the host and join screens, and again by the host's game engine, so a modified client can't skip the check. Blocked: profanity, sexual terms, slurs and hate terms, threats and self-harm phrases, links / e-mail addresses / phone-number-like strings, invisible or direction-flipping characters, and names that pose as the game or its staff (such as "Host" or "Admin"). Common disguises are handled (`sh1t`, `f u c k`, `fuuuck`, look-alike letters). A rejected name just gets "Please choose a different name." and never says which word matched.
 
-No word filter is perfect: unusual spellings and other languages can slip through, and a rare innocent name may be blocked. The lists are plain arrays at the top of `js/names.js`, so they are easy to adjust. Mild words such as "hell" and "damn" are blocked too; remove them from the list if you want a more relaxed game.
+No word filter is perfect: unusual spellings and other languages can slip through, and a rare innocent name may be blocked. The lists are plain arrays at the top of `js/filter.js`, so they are easy to adjust. Mild words such as "hell" and "damn" are blocked too; remove them from the list if you want a more relaxed game.
 
 ## Settings
 
@@ -69,10 +79,10 @@ Edit `js/config.js` to change the question timer, round names, points per round,
 
 ```
 node tests/host-game.test.js
-node tests/names.test.js
+node tests/filter.test.js
 ```
 
-The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names are blocked and that innocent ones (Scunthorpe, Dickinson, Cassie, Hancock, and so on) are not. No dependencies needed.
+The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names and chat messages are blocked and that innocent ones (Scunthorpe, Dickinson, "this hit me", "1000000 points", and so on) are not. The engine tests also cover chat: filtering, the rate limit, history, and lobby-only. No dependencies needed.
 
 ## Notes and limits
 
