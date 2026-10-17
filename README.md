@@ -1,6 +1,6 @@
-# Sports Trivia
+# Trivia Showdown
 
-A browser-based sports trivia game powered by the [Open Trivia DB](https://opentdb.com) API (category 21: Sports).
+A browser-based trivia game powered by the [Open Trivia DB](https://opentdb.com) API (currently the Sports category).
 
 ## How it plays
 

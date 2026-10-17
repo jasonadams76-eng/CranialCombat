@@ -4,7 +4,7 @@ const UI = (() => {
 
   function renderStart(onStart) {
     app.innerHTML = `
-      <h1>🏆 Sports Trivia</h1>
+      <h1>🏆 Trivia Showdown</h1>
       <p class="muted">${CONFIG.rounds.length} rounds, ${CONFIG.questionsPerRound} questions each.</p>
       <ul class="breakdown">
         ${CONFIG.rounds.map((r, i) =>
