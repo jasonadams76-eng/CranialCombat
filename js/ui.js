@@ -1,6 +1,7 @@
 // All rendering and click handling. Receives data and callbacks; holds no game rules.
 const UI = (() => {
   const app = document.getElementById("app");
+  const stage = document.getElementById("stage");
   let current = null;
   let tick = null;
   let qState = null;
@@ -9,14 +10,26 @@ const UI = (() => {
     c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   function clearTimers() { if (tick) { clearInterval(tick); tick = null; } }
-  function show(name, html) { clearTimers(); current = name; app.innerHTML = html; }
+  function show(name, html) {
+    clearTimers(); current = name;
+    stage.className = name === "splash" ? "stage splash-stage" : "stage";
+    app.className = name === "splash" ? "splash" : "panel";
+    app.innerHTML = html;
+  }
+
+  const ART = "assets/splash.jpg";
+  const artUrl = () => `${ART}?v=${typeof BUILD === "undefined" ? "0" : BUILD}`;
+  // The blurred artwork behind every screen. If the image is missing the plain dark background shows.
+  function setArt() {
+    document.documentElement.style.setProperty("--art", `url("${new URL(artUrl(), document.baseURI).href}")`);   // CSS resolves urls against the stylesheet, so make it absolute
+  }
   const $ = id => document.getElementById(id);
 
   const medal = rank => (rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : rank);
 
   function standingsTable(list, me) {
     return `<table class="standings"><tbody>${list.map(s => `
-      <tr class="${s.id === me ? "me" : ""} ${s.connected ? "" : "gone"}">
+      <tr class="${s.id === me ? "me" : ""} ${s.rank === 1 && s.score > 0 ? "lead" : ""} ${s.connected ? "" : "gone"}">
         <td class="rank">${medal(s.rank)}</td>
         <td class="name">${esc(s.name)}${s.id === me ? ' <span class="you">you</span>' : ""}${s.connected ? "" : ' <span class="muted">(left)</span>'}</td>
         <td class="gain">${s.gained > 0 ? "+" + s.gained : ""}</td>
@@ -25,12 +38,28 @@ const UI = (() => {
   }
 
   // ---------- simple screens ----------
+  function splash(h) {
+    show("splash", `
+      <div class="splash-art" id="splash-art">
+        <img src="${artUrl()}" alt="Cranial Combat: Trivia Showdown. A glowing blue brain faces a flaming orange brain." width="1024" height="478">
+        <span class="clash" aria-hidden="true"></span>
+      </div>
+      <button class="primary start" id="start-game">Start Game</button>`);
+    const img = app.querySelector("img");
+    // No artwork: show the title as text so the screen still works.
+    img.onerror = () => {
+      $("splash-art").innerHTML = `<h1 class="fallback-title">Cranial Combat<small>Trivia Showdown</small></h1>`;
+    };
+    $("start-game").onclick = h.onStart;
+  }
+
   function landing(h) {
     show("landing", `
-      <h1>🏆 Trivia Showdown</h1>
-      <p class="muted">Multiplayer trivia. Host a game and share the code, or join a friend's game.</p>
+      <h1>Cranial Combat<small>Trivia Showdown</small></h1>
+      <p class="muted">Host a game and share the code, or join a friend's game.</p>
       <button class="primary" id="host">Host a Game</button>
-      <button class="secondary" id="join">Join a Game</button>`);
+      <button class="secondary" id="join">Join a Game</button>
+      <p class="build">Build ${typeof BUILD === "undefined" ? "unknown" : esc(BUILD)}</p>`);
     $("host").onclick = h.onHost;
     $("join").onclick = h.onJoin;
   }
@@ -225,7 +254,7 @@ const UI = (() => {
       <span class="badge category">${esc(msg.category)}</span>
       <div class="question">${esc(msg.question)}</div>
       <div class="answers" id="answers">
-        ${msg.answers.map((a, i) => `<button data-i="${i}">${esc(a)}</button>`).join("")}
+        ${msg.answers.map((a, i) => `<button data-i="${i}" data-k="${"ABCD"[i]}">${esc(a)}</button>`).join("")}
       </div>
       <div class="status" id="status"></div>`);
 
@@ -249,13 +278,15 @@ const UI = (() => {
 
     // Countdown bar. Time runs from the moment the question arrives here.
     const bar = $("bar");
-    bar.style.transition = `width ${msg.durationMs}ms linear`;
-    requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = "0%"; }));
+    bar.style.transition = `clip-path ${msg.durationMs}ms linear`;
+    requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.clipPath = "inset(0 100% 0 0)"; }));
     const end = performance.now() + msg.durationMs;
     tick = setInterval(() => {
       const left = Math.max(0, Math.ceil((end - performance.now()) / 1000));
       const secs = $("secs");
       if (secs) secs.textContent = left;
+      const track = document.querySelector(".timer");
+      if (track && left <= 5) track.classList.add("urgent");
       if (left <= 0 && !qState.answered) {
         qState.answered = true;
         lockAll();
@@ -287,7 +318,7 @@ const UI = (() => {
       <div class="headline ${cls}">${headline}</div>
       <div class="question small-q">${esc(q.question)}</div>
       <div class="answers">
-        ${q.answers.map((a, i) => `<button disabled class="${i === msg.correctIndex ? "correct" : ""} ${mine && i === mine.choice && i !== msg.correctIndex ? "wrong" : ""}">${esc(a)}</button>`).join("")}
+        ${q.answers.map((a, i) => `<button disabled data-k="${"ABCD"[i]}" class="${i === msg.correctIndex ? "correct" : ""} ${mine && i === mine.choice && i !== msg.correctIndex ? "wrong" : ""}">${esc(a)}</button>`).join("")}
       </div>
       <h2>Standings</h2>
       ${standingsTable(msg.standings, me)}
@@ -326,7 +357,7 @@ const UI = (() => {
 
     show("gameOver", `
       <h1>Game Over!</h1>
-      <div class="winner">🏆 ${banner}</div>
+      <div class="winner">${banner}</div>
       <table class="standings final">
         <thead><tr><th></th><th>Player</th>${msg.rounds.map(r => `<th>${esc(r.name)}</th>`).join("")}<th>Total</th></tr></thead>
         <tbody>${msg.standings.map(p => `
@@ -346,7 +377,7 @@ const UI = (() => {
   }
 
   return {
-    landing, hostSetup, joinSetup, formError, connecting, loading, message,
+    splash, setArt, landing, hostSetup, joinSetup, formError, connecting, loading, message,
     lobby, chatUpdate, chatError, question, progress, reveal, roundEnd, gameOver,
     isShowing: name => current === name,
   };

@@ -54,6 +54,7 @@ function teardown() {
   });
 }
 
+// The Host / Join screen. Leaving a game or pressing Back anywhere lands here, not on the splash.
 function home() {
   teardown();
   App.leaving = false;
@@ -284,7 +285,11 @@ function startJoining(rawCode, rawName) {
   }
 })();
 
-// A link like  .../index.html#K7QX  opens the join screen with the code filled in.
-const hashCode = location.hash.replace("#", "").trim().toUpperCase();
-if (hashCode.length === CONFIG.codeLength) showJoinSetup(hashCode);
-else home();
+// Called once by index.html after it has checked that every script loaded and matches the page.
+// A link like  .../index.html#K7QX  skips the splash and opens the join screen with the code filled in.
+App.start = function () {
+  UI.setArt();
+  const hashCode = location.hash.replace("#", "").trim().toUpperCase();
+  if (hashCode.length === CONFIG.codeLength) showJoinSetup(hashCode);
+  else UI.splash({ onStart: home });
+};

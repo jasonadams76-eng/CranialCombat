@@ -1,4 +1,4 @@
-# Trivia Showdown
+# Cranial Combat: Trivia Showdown
 
 A multiplayer browser trivia game powered by the [Open Trivia DB](https://opentdb.com) API. One player hosts, everyone else joins with a 4-letter code. There is no game server: the host's browser runs the game and players connect to it directly (peer-to-peer, via [PeerJS](https://peerjs.com)).
 
@@ -31,8 +31,11 @@ For a quick solo test you can double-click `index.html`. An internet connection 
 ## Project layout
 
 ```
-index.html        page shell (loads PeerJS from a CDN, version pinned)
-css/styles.css    styling
+index.html        page shell, startup check (loads PeerJS from a CDN, version pinned)
+css/styles.css    the neon cyan-vs-orange look
+assets/splash.jpg splash artwork (also the blurred backdrop on every screen)
+tools/stamp.js    stamps a build id onto the file links (see "Updating the site")
+js/build.js       the build id, written by stamp.js
 js/config.js      rounds, points, timers, player limit, join-code settings
 js/api.js         OpenTDB: category list and question fetching (host only)
 js/filter.js      name and chat filter (blocked words, disguises, links, reserved names)
@@ -44,6 +47,18 @@ tests/            node tests for the rules engine and the filter
 ```
 
 Scripts are plain `<script>` tags loaded in the order above; each file uses globals from the ones before it.
+
+## Updating the site
+
+GitHub Pages and browsers cache files for about 10 minutes, so a visitor can briefly get a new page with old scripts. To prevent that, run this before each commit that changes `css/`, `js/` or `assets/`:
+
+```
+node tools/stamp.js
+```
+
+It adds a build id to every file link in `index.html` and writes `js/build.js`. The page checks at startup that every script loaded and matches; if not, it says so and offers a Reload button instead of showing buttons that do nothing. The Host / Join screen shows the build id, so you can confirm which version you are looking at. After a push, wait a minute or two for Pages to deploy, then hard refresh (Ctrl+F5).
+
+Screens open on a splash with a START GAME button; a link like `.../#K7QX` skips it. Fonts (Russo One, Rajdhani) come from Google Fonts and fall back to system fonts when offline. The splash art is 1024 px wide, so it looks soft on very large screens; swap in a larger `assets/splash.jpg` (same crop, no buttons) and run the stamp step.
 
 ## How the multiplayer works
 
