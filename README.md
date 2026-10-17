@@ -8,16 +8,17 @@ A multiplayer browser trivia game powered by the [Open Trivia DB](https://opentd
 2. **Players** open the game, enter the code and a name.
 3. The host starts the game. Everyone gets the same questions: **3 rounds of 5**.
 
-| Round | Difficulty | Points per correct answer | Round total |
+| Round | Questions | Points per correct answer | Round total |
 |-------|-----------|---------------------------|-------------|
-| 1 | Easy | 25 | 125 |
-| 2 | Medium | 75 | 375 |
-| 3 | Hard | 100 | 500 |
+| Round 1 | Easy | 25 | 125 |
+| Round 2 | Medium | 75 | 375 |
+| Final Round | Hard | 100 | 500 |
 
 A perfect game scores exactly **1000** points.
 
-- Each question has a **10 second** timer. It ends early once everyone has answered. No answer scores 0.
-- After every question everyone sees the correct answer and the **updated standings**.
+- Each question has a **20 second** timer. It ends early once everyone has answered. No answer scores 0.
+- When a question ends, everyone sees the correct answer and the **updated standings**. They stay up until the **host clicks Next**, so nobody is rushed. Players see "Waiting for the host…".
+- The round scoreboard works the same way: the host clicks to start the next round.
 - At the end there is a final leaderboard with a per-round breakdown. The host can start another game with the same players.
 - Up to 8 players.
 
@@ -49,6 +50,7 @@ Scripts are plain `<script>` tags loaded in the order above; each file uses glob
 - The host's browser is authoritative: it fetches the questions, runs the timer and keeps the scores.
 - The correct answer is **never sent** to players until the reveal, so it can't be read from network messages.
 - The host decides when time is up; the countdown on players' screens is only for display. There is no speed bonus, so network lag does not cost anyone points.
+- Pacing is in the host's hands: only the host's own screen can advance the game. If the host walks away on a standings screen, the game waits.
 - A player who disconnects is marked "(left)" and the game carries on without waiting for them.
 - If the **host** leaves, the game ends for everyone.
 - Joining closes once the game starts.
@@ -61,7 +63,7 @@ No word filter is perfect: unusual spellings and other languages can slip throug
 
 ## Settings
 
-Edit `js/config.js` to change the timer, reveal and round-break lengths, points per round, questions per round, or the maximum number of players.
+Edit `js/config.js` to change the question timer, round names, points per round, questions per round, or the maximum number of players.
 
 ## Tests
 
@@ -70,7 +72,7 @@ node tests/host-game.test.js
 node tests/names.test.js
 ```
 
-The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again. The second checks that disguised bad names are blocked and that innocent ones (Scunthorpe, Dickinson, Cassie, Hancock, and so on) are not. No dependencies needed.
+The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names are blocked and that innocent ones (Scunthorpe, Dickinson, Cassie, Hancock, and so on) are not. No dependencies needed.
 
 ## Notes and limits
 

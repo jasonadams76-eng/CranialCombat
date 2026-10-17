@@ -16,6 +16,7 @@ function fakeTimers() {
   return {
     setTimeout: (fn, ms) => { const id = nextId++; pending.set(id, { fn, at: now + ms }); return id; },
     clearTimeout: id => pending.delete(id),
+    now: () => now,
     advance(ms) {
       const target = now + ms;
       for (;;) {
@@ -39,10 +40,12 @@ function makeQuestions() {
   })));
 }
 
-function setup() {
+function setup(extra) {
   const timers = fakeTimers();
   const log = [];
-  const game = HostGame.create({ broadcast: m => log.push(m), timers });
+  // minAdvanceMs is 0 here so tests can click Next right away; one test turns the real guard on.
+  const game = HostGame.create(Object.assign(
+    { broadcast: m => log.push(m), timers, now: timers.now, minAdvanceMs: 0 }, extra));
   const last = t => { for (let i = log.length - 1; i >= 0; i--) if (log[i].t === t) return log[i]; };
   return { timers, log, game, last };
 }
@@ -91,7 +94,7 @@ test("question message never reveals the correct answer", () => {
   const q = last("question");
   assert.strictEqual(q.correctIndex, undefined);
   assert.strictEqual(q.correct, undefined);
-  assert.strictEqual(q.durationMs, 10000);
+  assert.strictEqual(q.durationMs, 20000);
   assert.strictEqual(q.category, "Cat0");
 });
 
@@ -107,15 +110,15 @@ test("scoring: 25 / 75 / 100 points by round (1000 total), wrong and missing ans
       game.submitAnswer("b", q.id, (right + 1) % 4);          // always wrong
       // c never answers -> timer must close the question
       assert.strictEqual(game.getPhase(), "question");
-      timers.advance(10000);
+      timers.advance(20000);
       assert.strictEqual(game.getPhase(), "reveal");
       const rev = last("reveal");
       const pts = CONFIG.rounds[r].points;
       assert.strictEqual(rev.results.find(x => x.id === "a").gained, pts);
       assert.strictEqual(rev.results.find(x => x.id === "b").gained, 0);
       assert.strictEqual(rev.results.find(x => x.id === "c").choice, null);
-      timers.advance(5000);                                   // reveal -> next question / round break
-      if (i === 4 && r < 2) { assert.strictEqual(game.getPhase(), "roundbreak"); timers.advance(6000); }
+      game.next();                                            // host clicks Next
+      if (i === 4 && r < 2) { assert.strictEqual(game.getPhase(), "roundbreak"); game.next(); }
     }
   }
   assert.strictEqual(game.getPhase(), "over");
@@ -157,7 +160,7 @@ test("answers: only first counts, invalid / stale / late ones are ignored", () =
   assert.strictEqual(game.submitAnswer("b", q.id, "1"), false);              // not an integer
   assert.strictEqual(game.submitAnswer("b", q.id + 99, 0), false);           // wrong question id
   assert.strictEqual(game.submitAnswer("zzz", q.id, 0), false);              // unknown player
-  timers.advance(10000);
+  timers.advance(20000);
   assert.strictEqual(game.submitAnswer("b", q.id, 0), false);                // after time is up
   assert.strictEqual(last("reveal").results.find(r => r.id === "a").gained, 25);
 });
@@ -195,15 +198,70 @@ test("round break shows standings and announces the next round", () => {
   const { game, last, timers } = setup();
   game.addPlayer("a", "A");
   game.lock("x"); game.begin(makeQuestions());
-  for (let i = 0; i < 5; i++) { timers.advance(10000); timers.advance(5000); }
+  for (let i = 0; i < 5; i++) { timers.advance(20000); game.next(); }
   const rb = last("roundEnd");
-  assert.strictEqual(rb.roundName, "Easy");
-  assert.strictEqual(rb.nextRoundName, "Medium");
+  assert.strictEqual(rb.roundName, "Round 1");
+  assert.strictEqual(rb.nextRoundName, "Round 2");
   assert.strictEqual(rb.nextPoints, 75);
-  assert.strictEqual(last("question").roundName, "Easy");     // not started yet
-  timers.advance(6000);
-  assert.strictEqual(last("question").roundName, "Medium");
+  assert.strictEqual(rb.nextLabel, "Start Round 2");
+  assert.strictEqual(last("question").roundName, "Round 1");  // next round has not started
+  timers.advance(600000);                                     // the scoreboard never moves on by itself
+  assert.strictEqual(game.getPhase(), "roundbreak");
+  game.next();
+  assert.strictEqual(last("question").roundName, "Round 2");
   assert.strictEqual(last("question").qIndex, 1);
+});
+
+test("pacing: standings wait for the host, no timer moves the game on", () => {
+  const { game, last, timers, log } = setup();
+  game.addPlayer("a", "A");
+  game.lock("x"); game.begin(makeQuestions());
+  const q1 = last("question");
+  timers.advance(20000);                                      // question time runs out
+  assert.strictEqual(game.getPhase(), "reveal");
+  const rev = last("reveal");
+  assert.strictEqual(rev.nextLabel, "Next Question");
+  assert.strictEqual(rev.revealMs, undefined);
+  const before = log.length;
+  timers.advance(10 * 60 * 1000);                             // ten minutes pass
+  assert.strictEqual(game.getPhase(), "reveal");
+  assert.strictEqual(log.length, before);                     // nothing was sent
+  game.next();
+  assert.strictEqual(game.getPhase(), "question");
+  assert.strictEqual(last("question").qIndex, 2);
+  assert.notStrictEqual(last("question").id, q1.id);
+  game.next();                                                // next() during a question does nothing
+  assert.strictEqual(last("question").qIndex, 2);
+  assert.strictEqual(game.getPhase(), "question");
+});
+
+test("pacing: button labels, double clicks and the final results", () => {
+  const { game, last, timers } = setup({ minAdvanceMs: 600 });   // the real double-click guard is on
+  game.addPlayer("a", "A");
+  game.lock("x"); game.begin(makeQuestions());
+  const labels = [];
+  for (let n = 0; n < 15; n++) {
+    timers.advance(20000);
+    labels.push(last("reveal").nextLabel);
+    game.next();                                              // too soon after the standings appeared: ignored
+    assert.strictEqual(game.getPhase(), "reveal");
+    timers.advance(700);
+    game.next();
+    game.next();                                              // double click: second one must not skip the next screen
+    if (n % 5 === 4 && n < 14) {
+      assert.strictEqual(game.getPhase(), "roundbreak");      // the scoreboard was not skipped
+      game.next();                                            // too soon: ignored
+      assert.strictEqual(game.getPhase(), "roundbreak");
+      timers.advance(700);
+      game.next();
+    }
+  }
+  same(labels.slice(0, 5), ["Next Question", "Next Question", "Next Question", "Next Question", "Finish Round"]);
+  assert.strictEqual(labels[9], "Finish Round");
+  assert.strictEqual(labels[14], "See Final Results");
+  assert.strictEqual(game.getPhase(), "over");
+  const over = last("gameOver");
+  same(over.rounds.map(r => r.name), ["Round 1", "Round 2", "Final Round"]);
 });
 
 test("reset: keeps connected players, zeroes scores, returns to lobby", () => {
@@ -213,12 +271,12 @@ test("reset: keeps connected players, zeroes scores, returns to lobby", () => {
   const q = last("question");
   game.submitAnswer("a", q.id, q.answers.indexOf("right"));
   game.removePlayer("b");
-  timers.advance(10000);
+  timers.advance(20000);
   game.reset();
   assert.strictEqual(game.getPhase(), "lobby");
   same(last("lobby").players.map(p => p.id), ["a"]);
   game.lock("x"); game.begin(makeQuestions());
-  timers.advance(10000);
+  timers.advance(20000);
   assert.strictEqual(last("reveal").standings[0].score, 0);
 });
 

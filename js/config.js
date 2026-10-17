@@ -7,14 +7,18 @@ const CONFIG = {
   questionsPerRound: 5,
   targetTotal: 1000,       // a perfect game; main.js warns if the settings above stop adding up to this
   rounds: [
-    { name: "Easy",   difficulty: "easy",   points: 25  },
-    { name: "Medium", difficulty: "medium", points: 75  },
-    { name: "Hard",   difficulty: "hard",   points: 100 },
+    { name: "Round 1",     difficulty: "easy",   points: 25  },
+    { name: "Round 2",     difficulty: "medium", points: 75  },
+    { name: "Final Round", difficulty: "hard",   points: 100 },
   ],
 
-  questionSeconds: 10,     // time limit per question
-  revealSeconds: 5,        // how long the answer + standings stay up
-  roundBreakSeconds: 6,    // pause between rounds
+  // Time limit per question. The standings and round scoreboards have no timer:
+  // the host clicks Next to move on.
+  questionSeconds: 20,
+
+  // Guards against double clicks landing on the next screen.
+  minAdvanceMs: 600,       // the engine ignores Next this soon after the standings / scoreboard appear
+  answerGuardMs: 500,      // answer buttons ignore clicks this soon after a question appears
 
   maxPlayers: 8,
   maxNameLength: 20,

@@ -11,9 +11,9 @@ const HostGame = (() => {
       maxPlayers: CONFIG.maxPlayers,
       maxNameLength: CONFIG.maxNameLength,
       questionMs: CONFIG.questionSeconds * 1000,
-      revealMs: CONFIG.revealSeconds * 1000,
-      roundBreakMs: CONFIG.roundBreakSeconds * 1000,
       broadcast: () => {},
+      minAdvanceMs: CONFIG.minAdvanceMs,
+      now: () => Date.now(),
       // Name filter. The host enforces this even if a player's screen skipped it.
       nameCheck: n => (typeof NameFilter !== "undefined"
         ? NameFilter.check(n, { maxLength: CONFIG.maxNameLength })
@@ -32,6 +32,7 @@ const HostGame = (() => {
     let cur = null;            // { id, question, answers: Map(playerId -> choice) }
     let timer = null;
     let qSeq = 0;
+    let phaseStartedAt = 0;    // when the standings / round scoreboard appeared (see next())
 
     const find = id => players.find(p => p.id === id);
     const connected = () => players.filter(p => p.connected);
@@ -173,6 +174,7 @@ const HostGame = (() => {
       if (phase !== "question") return;
       clearTimer();
       phase = "reveal";
+      phaseStartedAt = o.now();
       const round = o.rounds[r];
       const correctIndex = cur.question.answers.indexOf(cur.question.correct);
       const gainedMap = {};
@@ -185,11 +187,23 @@ const HostGame = (() => {
         gainedMap[p.id] = gained;
         return { id: p.id, name: p.name, choice, correct, gained };
       });
+      const lastOfRound = q + 1 >= rounds[r].length;
+      const finalRound = r + 1 >= o.rounds.length;
+      // No timer here: the standings stay up until the host calls next().
       o.broadcast({
         t: "reveal", id: cur.id, correctIndex, correct: cur.question.correct,
-        results, standings: standings(gainedMap), revealMs: o.revealMs,
+        results, standings: standings(gainedMap),
+        nextLabel: !lastOfRound ? "Next Question" : finalRound ? "See Final Results" : "Finish Round",
       });
-      setTimer(advance, o.revealMs);
+    }
+
+    // Host-only (called locally by the host's screen, never from a network message).
+    // Moves on from the standings, or from a round scoreboard.
+    function next() {
+      // A double click on the button would otherwise skip the next screen too.
+      if ((phase === "reveal" || phase === "roundbreak") && o.now() - phaseStartedAt < o.minAdvanceMs) return;
+      if (phase === "reveal") advance();
+      else if (phase === "roundbreak") { r++; q = 0; startQuestion(); }
     }
 
     function advance() {
@@ -199,12 +213,12 @@ const HostGame = (() => {
         startQuestion();
       } else if (r + 1 < o.rounds.length) {
         phase = "roundbreak";
+        phaseStartedAt = o.now();
         o.broadcast({
           t: "roundEnd", round: r + 1, roundName: o.rounds[r].name,
           nextRoundName: o.rounds[r + 1].name, nextPoints: o.rounds[r + 1].points,
-          standings: standings(), breakMs: o.roundBreakMs,
+          standings: standings(), nextLabel: `Start ${o.rounds[r + 1].name}`,
         });
-        setTimer(() => { r++; q = 0; startQuestion(); }, o.roundBreakMs);
       } else {
         phase = "over";
         o.broadcast({
@@ -217,7 +231,7 @@ const HostGame = (() => {
     function destroy() { clearTimer(); }
 
     return {
-      addPlayer, removePlayer, setMeta, lock, unlock, reset, begin, submitAnswer, destroy,
+      addPlayer, removePlayer, setMeta, lock, unlock, reset, begin, submitAnswer, next, destroy,
       getPhase: () => phase,
       getPlayers: () => publicPlayers(),
     };

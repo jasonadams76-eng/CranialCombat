@@ -110,11 +110,11 @@ function handleMessage(msg) {
     case "reveal": {
       const mine = msg.standings.find(s => s.id === App.me);
       if (mine) App.myScore = mine.score;
-      UI.reveal(msg, App.lastQuestion, App.me);
+      UI.reveal(msg, App.lastQuestion, App.me, hostControls());
       break;
     }
     case "roundEnd":
-      UI.roundEnd(msg, App.me);
+      UI.roundEnd(msg, App.me, hostControls());
       break;
     case "gameOver":
       App.myScore = 0;
@@ -133,6 +133,11 @@ function handleMessage(msg) {
       break;
     }
   }
+}
+
+// Only the host's own screen can move the game on; players just wait.
+function hostControls() {
+  return { isHost: App.mode === "host", onNext: () => App.engine && App.engine.next() };
 }
 
 function sendAnswer(choice) {
@@ -196,7 +201,7 @@ async function hostBegin() {
   if (!eng.lock("Fetching questions…")) return;
   try {
     const rounds = await Api.fetchAllRounds(App.category ? App.category.id : null, i => {
-      eng.lock(`Fetching ${CONFIG.rounds[i].name} questions…`);
+      eng.lock(`Fetching questions (${i + 1} of ${CONFIG.rounds.length})…`);
     });
     eng.begin(rounds);
   } catch (err) {

@@ -12,18 +12,6 @@ const UI = (() => {
   function show(name, html) { clearTimers(); current = name; app.innerHTML = html; }
   const $ = id => document.getElementById(id);
 
-  // Counts down in the element with the given id.
-  function countdown(id, ms, prefix) {
-    const end = performance.now() + ms;
-    const update = () => {
-      const el = $(id);
-      if (!el) return;
-      el.textContent = `${prefix} ${Math.max(0, Math.ceil((end - performance.now()) / 1000))}s`;
-    };
-    update();
-    tick = setInterval(update, 250);
-  }
-
   const medal = rank => (rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : rank);
 
   function standingsTable(list, me) {
@@ -166,12 +154,12 @@ const UI = (() => {
   function question(msg, ctx) {
     show("question", `
       <div class="topbar">
-        <span>Round ${msg.round} of ${msg.rounds} · Question ${msg.qIndex} of ${msg.qTotal}</span>
+        <span>${esc(msg.roundName)} · Question ${msg.qIndex} of ${msg.qTotal}</span>
         <span>Your score: ${ctx.score}</span>
       </div>
       <div class="timer"><div class="timer-bar" id="bar"></div></div>
       <div class="timer-text"><span id="secs">${Math.ceil(msg.durationMs / 1000)}</span>s</div>
-      <span class="badge ${esc(msg.difficulty)}">${esc(msg.difficulty)} · ${msg.points} pts</span>
+      <span class="badge ${esc(msg.difficulty)}">${esc(msg.roundName)} · ${msg.points} pts</span>
       <span class="badge category">${esc(msg.category)}</span>
       <div class="question">${esc(msg.question)}</div>
       <div class="answers" id="answers">
@@ -183,9 +171,12 @@ const UI = (() => {
     const buttons = Array.from(document.querySelectorAll("#answers button"));
     const lockAll = () => buttons.forEach(b => { b.disabled = true; });
 
+    const shownAt = performance.now();
     buttons.forEach(b => {
       b.onclick = () => {
         if (qState.answered) return;
+        // A double click on the host's Next button can land here: ignore clicks right after render.
+        if (performance.now() - shownAt < CONFIG.answerGuardMs) return;
         qState.answered = true;
         b.classList.add("picked");
         lockAll();
@@ -219,8 +210,8 @@ const UI = (() => {
   }
 
   // ---------- reveal / standings ----------
-  // msg: reveal message. q: the question message it belongs to.
-  function reveal(msg, q, me) {
+  // msg: reveal message. q: the question message it belongs to. h: { isHost, onNext }
+  function reveal(msg, q, me, h) {
     const mine = msg.results.find(r => r.id === me);
     let headline = "⏰ Time's up!", cls = "bad";
     if (mine && mine.correct) { headline = `✅ Correct! +${mine.gained}`; cls = "good"; }
@@ -228,7 +219,7 @@ const UI = (() => {
 
     show("reveal", `
       <div class="topbar">
-        <span>Round ${q.round} of ${q.rounds} · Question ${q.qIndex} of ${q.qTotal}</span>
+        <span>${esc(q.roundName)} · Question ${q.qIndex} of ${q.qTotal}</span>
         <span class="badge category">${esc(q.category)}</span>
       </div>
       <div class="headline ${cls}">${headline}</div>
@@ -238,17 +229,29 @@ const UI = (() => {
       </div>
       <h2>Standings</h2>
       ${standingsTable(msg.standings, me)}
-      <p class="muted center" id="next-in"></p>`);
-    countdown("next-in", msg.revealMs, "Next question in");
+      ${nextControl(h, msg.nextLabel)}`);
+    wireNext(h);
   }
 
-  function roundEnd(msg, me) {
+  // The host gets a button; everyone else is told to wait.
+  function nextControl(h, label) {
+    return h.isHost
+      ? `<button class="primary" id="next">${esc(label)}</button>`
+      : `<p class="muted center">Waiting for the host to continue…</p>`;
+  }
+  function wireNext(h) {
+    if (!h.isHost) return;
+    $("next").onclick = e => { e.target.disabled = true; h.onNext(); };   // disabled so a double click can't skip ahead
+  }
+
+  // msg: roundEnd message. h: { isHost, onNext }
+  function roundEnd(msg, me, h) {
     show("roundEnd", `
-      <h1>${esc(msg.roundName)} round complete!</h1>
+      <h1>${esc(msg.roundName)} complete!</h1>
       ${standingsTable(msg.standings.map(s => Object.assign({}, s, { gained: 0 })), me)}
-      <p class="muted center">Up next: <strong>${esc(msg.nextRoundName)}</strong> questions, ${msg.nextPoints} points each.</p>
-      <p class="muted center" id="next-in"></p>`);
-    countdown("next-in", msg.breakMs, "Starting in");
+      <p class="muted center">Up next: <strong>${esc(msg.nextRoundName)}</strong>, ${msg.nextPoints} points per question.</p>
+      ${nextControl(h, msg.nextLabel)}`);
+    wireNext(h);
   }
 
   // ---------- final results ----------
