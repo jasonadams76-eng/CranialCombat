@@ -9,10 +9,14 @@
 <body>
   <div class="card" id="app"></div>
 
-  <!-- Plain scripts (no modules) so the game runs by double-clicking this file. Order matters. -->
+  <!-- PeerJS (WebRTC) provides the peer-to-peer connection. Version is pinned. -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <!-- Plain scripts (no modules). Order matters: each file uses globals from the ones before it. -->
   <script src="js/config.js"></script>
   <script src="js/api.js"></script>
   <script src="js/game.js"></script>
+  <script src="js/net.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>
 </body>
