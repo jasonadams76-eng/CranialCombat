@@ -24,7 +24,7 @@ A perfect game scores exactly **1000** points.
 
 ## Running it
 
-Players on different devices need a web address, so host the folder as a static site, for example with **GitHub Pages** (repo Settings, Pages, deploy from the `main` branch). Then share the address. A link like `https://<you>.github.io/TriviaShowdown/#K7QX` opens the join screen with the code filled in.
+Players on different devices need a web address, so host the folder as a static site, for example with **GitHub Pages** (repo Settings, Pages, deploy from the `main` branch). Then share the address. A link like `https://<you>.github.io/CranialCombat/#K7QX` opens the join screen with the code filled in.
 
 For a quick solo test you can double-click `index.html`. An internet connection is required (for PeerJS and the question API).
 
