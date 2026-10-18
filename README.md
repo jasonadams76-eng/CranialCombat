@@ -38,7 +38,7 @@ assets/splash.jpg splash artwork (also the blurred backdrop on every screen)
 tools/stamp.js    stamps a build id onto the file links (see "Updating the site")
 js/build.js       the build id, written by stamp.js
 js/config.js      rounds, points, timers, player limit, join-code settings
-js/api.js         OpenTDB: category list and question fetching (host only)
+js/api.js         question sources (Open Trivia DB and The Trivia API), session token, repeat tracking (host only)
 js/filter.js      name and chat filter (blocked words, disguises, links, reserved names)
 js/game.js        host rules engine: players, timer, scoring, standings (no DOM, no network)
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
@@ -95,6 +95,17 @@ No word filter is perfect: unusual spellings and other languages can slip throug
 
 Edit `js/config.js` to change the question timer, round names, points per round, questions per round, or the maximum number of players.
 
+## Question sources
+
+Questions come from two free services, and only the host's browser talks to them:
+
+- **[Open Trivia DB](https://opentdb.com)** (CC BY-SA 4.0): used for every category. The host's browser asks for a **session token** and keeps it on the device (about 5 hours), so the service does not repeat a question. If a category's questions run out, the list is reset and the game carries on.
+- **[The Trivia API](https://the-trivia-api.com)** (CC BY-NC 4.0, free for non-commercial use): used for Random games and for the categories that match one of its ten (General Knowledge, Film & TV, Music, Science, Sports, Geography, History, Arts & Literature). It has no token, so the host's browser remembers the last 600 question ids it used and skips them.
+
+In Random mode the two sources alternate from round to round. If one is down or comes up short, the other fills in, and a question that already appeared in the same game is skipped. Categories with no match (Musicals, Gadgets and so on) use Open Trivia DB only. Edit `CONFIG.triviaApiUrl` or `T_SLUG` in `js/api.js` to change the mapping.
+
+This is a personal, non-commercial game. Thanks to both services for their free questions: please keep these credits if you share it, and check The Trivia API's terms before using the game commercially.
+
 ## Sound
 
 Music (splash and lobby) and effects (button taps, correct/wrong, scoreboard ticks, winner fanfare) are generated in the browser, so there are no audio files to host. The speaker button in the corner mutes everything and is remembered per device. Browsers only allow sound after a tap, so music starts on the first tap. On iPhones the ring/silent switch can silence web audio. Music is paused when the page is in the background. To use your own recordings, set `CONFIG.audioFiles` in `js/config.js` (for example `{ splash: "assets/audio/splash.mp3" }`); anything not listed stays synthesized. Reveal and celebration timing is also in `js/config.js` (`revealRowMs`, `revealWinnerPauseMs`, `celebrationMs`). Reduced-motion settings skip the animations.
@@ -104,9 +115,10 @@ Music (splash and lobby) and effects (button taps, correct/wrong, scoreboard tic
 ```
 node tests/host-game.test.js
 node tests/filter.test.js
+node tests/api.test.js
 ```
 
-The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names and chat messages are blocked and that innocent ones (Scunthorpe, Dickinson, "this hit me", "1000000 points", and so on) are not. The engine tests also cover chat: filtering, the rate limit, history, and lobby-only. No dependencies needed.
+The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names and chat messages are blocked and that innocent ones (Scunthorpe, Dickinson, "this hit me", "1000000 points", and so on) are not. The engine tests also cover chat: filtering, the rate limit, history, and lobby-only. The third covers the question sources with fake network answers: session token reuse, expiry and reset, repeat tracking, category mapping and fallback both ways. No dependencies needed.
 
 ## Notes and limits
 

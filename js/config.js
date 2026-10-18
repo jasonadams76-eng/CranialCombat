@@ -2,6 +2,9 @@
 const CONFIG = {
   apiUrl: "https://opentdb.com/api.php",
   categoriesUrl: "https://opentdb.com/api_category.php",
+  tokenUrl: "https://opentdb.com/api_token.php",           // session token: Open Trivia DB will not repeat a question for it
+  triviaApiUrl: "https://the-trivia-api.com/v2/questions",  // second source (free for non-commercial use)
+  triviaApiFetch: 40,                                        // questions requested per round so unseen ones can be chosen
 
   // Points per correct answer. With 5 questions per round, 5 x (25 + 75 + 100) = 1000.
   questionsPerRound: 5,
