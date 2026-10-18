@@ -207,19 +207,47 @@ const Sound = (() => {
     musicBus = ctx.createGain(); musicBus.gain.value = 0.3;
     sfxBus = ctx.createGain(); sfxBus.gain.value = 0.8;
     musicBus.connect(master); sfxBus.connect(master); master.connect(comp); comp.connect(ctx.destination);
-    loadFiles();
+    decodeIfNeeded();
     return ctx;
   }
 
-  function loadFiles() {
-    const files = (typeof CONFIG !== "undefined" && CONFIG.audioFiles) || {};
-    Object.keys(files).forEach(name => {
-      if (!files[name] || typeof fetch !== "function") return;
-      fetch(files[name]).then(r => r.arrayBuffer()).then(b => ctx.decodeAudioData(b)).then(buf => {
-        buffers[name] = buf;
-        if (name === wanted) { stopMusic(); applyMusic(); }     // swap in the recording
-      }).catch(() => { /* keep the built-in sound */ });
+  // Recordings named in CONFIG.audioFiles. The bytes are fetched in the background as soon as the page opens
+  // (one file at a time); a track is only decoded when it is needed, because decoded audio is large (~40 MB for
+  // two minutes of stereo) and a phone should not hold two at once.
+  const raw = {};                    // name -> downloaded bytes
+  const fileState = {};              // name -> "loading" | "ready" | "failed"
+  const files = () => (typeof CONFIG !== "undefined" && CONFIG.audioFiles) || {};
+  const WAIT_FOR_FILE_MS = 2500;     // how long music waits for a recording before the built-in tune stands in
+  let waitTimer = 0, waitFrom = 0;
+
+  function prefetch() {
+    const names = Object.keys(files()).filter(n => files()[n] && !fileState[n]);
+    if (typeof fetch !== "function") return;
+    names.forEach(n => { fileState[n] = "loading"; });
+    names.reduce((chain, n) => chain.then(() =>
+      fetch(files()[n]).then(r => { if (!r.ok) throw new Error("missing"); return r.arrayBuffer(); })
+        .then(bytes => { raw[n] = bytes; decodeIfNeeded(); })
+        .catch(() => { fileState[n] = "failed"; applyMusic(); })), Promise.resolve());
+  }
+
+  // Decode the recording that is wanted now (music), and any sound effect recordings (small).
+  function decodeIfNeeded() {
+    if (!ctx) return;
+    Object.keys(raw).forEach(n => {
+      if (buffers[n] || !raw[n] || raw[n] === "busy") return;
+      const isMusic = !!MUSIC[n];
+      if (isMusic && n !== wanted) return;
+      const bytes = raw[n]; raw[n] = "busy";
+      ctx.decodeAudioData(bytes.slice(0)).then(buf => {
+        raw[n] = bytes; buffers[n] = buf; fileState[n] = "ready";
+        if (n === wanted) applyMusic();
+      }).catch(() => { raw[n] = bytes; fileState[n] = "failed"; applyMusic(); });
     });
+  }
+
+  // Free the decoded copy of music that is no longer wanted.
+  function releaseOthers() {
+    Object.keys(buffers).forEach(n => { if (MUSIC[n] && n !== wanted && !(current && current.name === n)) delete buffers[n]; });
   }
 
   const running = () => !!ctx && ctx.state === "running";
@@ -252,8 +280,9 @@ const Sound = (() => {
       setTimeout(() => { cleanup(); try { out.disconnect(); } catch (e) { /* ignore */ } }, 650);
     };
     if (buffers[name]) {
-      const s = ctx.createBufferSource(); s.buffer = buffers[name]; s.loop = true; s.connect(out); s.start();
-      current = { name, stop: () => fadeOut(() => { try { s.stop(); } catch (e) { /* ignore */ } }) };
+      const g = ctx.createGain(); g.gain.value = (typeof CONFIG !== "undefined" && CONFIG.musicFileGain) || 0.8; g.connect(out);   // recordings are mastered loud
+      const s = ctx.createBufferSource(); s.buffer = buffers[name]; s.loop = true; s.connect(g); s.start();
+      current = { name, file: true, stop: () => fadeOut(() => { try { s.stop(); } catch (e) { /* ignore */ } }) };
       return;
     }
     const def = MUSIC[name];
@@ -274,7 +303,17 @@ const Sound = (() => {
     if (!wanted || muted || !running() || document.visibilityState === "hidden") { stopMusic(); return; }
     if (current && current.name === wanted) return;
     stopMusic();
+    // A recording is configured for this music: wait for it (a short while) instead of starting the built-in tune.
+    const configured = !!files()[wanted] && fileState[wanted] !== "failed";
+    if (configured && !buffers[wanted]) {
+      decodeIfNeeded();
+      if (!waitFrom) waitFrom = Date.now();
+      const left = WAIT_FOR_FILE_MS - (Date.now() - waitFrom);
+      if (left > 0) { clearTimeout(waitTimer); waitTimer = setTimeout(applyMusic, Math.min(left, 400)); return; }
+    }
+    waitFrom = 0; clearTimeout(waitTimer);
     startMusic(wanted);
+    releaseOthers();
   }
 
   function unlock() {
@@ -286,6 +325,7 @@ const Sound = (() => {
   }
 
   function unlockOnGesture() {
+    prefetch();                                                // start downloading recordings right away
     const handler = () => unlock();
     ["pointerdown", "touchend", "keydown", "click"].forEach(ev => document.addEventListener(ev, handler, { capture: true, passive: true }));
     document.addEventListener("visibilitychange", () => {      // phones lock or switch apps: pause the music, resume on return
@@ -294,7 +334,7 @@ const Sound = (() => {
     });
   }
 
-  function music(name) { wanted = name || null; applyMusic(); }
+  function music(name) { if (name !== wanted) waitFrom = 0; wanted = name || null; applyMusic(); }
 
   function setMuted(m) {
     muted = !!m;
@@ -323,6 +363,7 @@ const Sound = (() => {
   return {
     unlockOnGesture, play, music, setMuted, toggle: () => setMuted(!muted),
     isMuted: () => muted, onChange: fn => listeners.push(fn),
+    playing: () => current ? { name: current.name, file: !!current.file } : null,     // for tests
     effects: Object.keys(EFFECTS), tracks: Object.keys(MUSIC), renderForTest,
   };
 })();

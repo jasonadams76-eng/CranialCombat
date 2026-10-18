@@ -42,7 +42,8 @@ js/api.js         question sources (Open Trivia DB and The Trivia API), session 
 js/filter.js      name and chat filter (blocked words, disguises, links, reserved names)
 js/game.js        host rules engine: players, timer, scoring, standings (no DOM, no network)
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
-js/audio.js       synthesized music and sound effects (Web Audio, no audio files)
+js/audio.js       music (recordings, with built-in fallback) and synthesized sound effects (Web Audio)
+assets/audio/     splash.mp3 and lobby.mp3
 js/fx.js          confetti and fireworks canvas
 js/ui.js          all screens and click handling
 js/main.js        wires UI, network and engine together
@@ -108,7 +109,11 @@ This is a personal, non-commercial game. Thanks to both services for their free 
 
 ## Sound
 
-Music (splash and lobby) and effects (button taps, correct/wrong, scoreboard ticks, winner fanfare) are generated in the browser, so there are no audio files to host. The speaker button in the corner mutes everything and is remembered per device. Browsers only allow sound after a tap, so music starts on the first tap. On iPhones the ring/silent switch can silence web audio. Music is paused when the page is in the background. To use your own recordings, set `CONFIG.audioFiles` in `js/config.js` (for example `{ splash: "assets/audio/splash.mp3" }`); anything not listed stays synthesized. Reveal and celebration timing is also in `js/config.js` (`revealRowMs`, `revealWinnerPauseMs`, `celebrationMs`). Reduced-motion settings skip the animations.
+The **splash and lobby music are recordings** in `assets/audio/` (`splash.mp3` plays on the splash, join and connecting screens, `lobby.mp3` in the lobby). They are 128 kbps MP3s, about 1.6 MB and 1.9 MB, and fade out and in at their ends so they loop smoothly. The page downloads them in the background when it opens. Music starts on the first tap and waits up to about 2.5 seconds for the recording; if it can't be loaded, the built-in synthesized tune plays instead. There is no music during questions.
+
+The sound effects (button taps, correct/wrong, scoreboard ticks, winner fanfare) are generated in the browser, so there are no files for them. The speaker button in the corner mutes everything and is remembered per device. Browsers only allow sound after a tap, and on iPhones the ring/silent switch can silence web audio. Music pauses when the page is in the background.
+
+To change the music, replace the MP3 files (rename them, for example `splash2.mp3`, so browsers don't keep the old copy) and update the names in `CONFIG.audioFiles` in `js/config.js`. The same setting can swap in a recording for any sound effect (names: click, select, ready, correct, wrong, tick, drumroll, crash, fanfare, launch, burst, crackle, applause). `CONFIG.musicFileGain` sets how loud the recordings are. Reveal and celebration timing (`revealRowMs`, `revealWinnerPauseMs`, `celebrationMs`) is in the same file, and reduced-motion settings skip the animations.
 
 ## Tests
 

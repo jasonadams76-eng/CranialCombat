@@ -46,7 +46,11 @@ const CONFIG = {
   // put the file in assets/audio/ and name it here, e.g.  splash: "assets/audio/splash.mp3"
   // Names: music: splash, lobby.  effects: click, select, ready, correct, wrong, tick, drumroll,
   // crash, fanfare, launch, burst, crackle, applause.
-  audioFiles: {},
+  audioFiles: {
+    splash: "assets/audio/splash.mp3",   // plays on the splash, join and connecting screens
+    lobby: "assets/audio/lobby.mp3",     // plays in the lobby
+  },
+  musicFileGain: 0.8,        // volume of the recordings relative to the music level (they are mastered loud)
 
   // Staying connected. Players say "still here" every heartbeatMs. The host drops anyone it hasn't
   // heard from in staleMs (a phone that went to the background just disappears without saying goodbye).
