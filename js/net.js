@@ -38,7 +38,7 @@ const Net = (() => {
 
     function open() {
       const code = randomCode();
-      peer = new Peer(CONFIG.peerPrefix + code);
+      peer = new Peer(CONFIG.peerPrefix + code, { config: { iceServers: CONFIG.iceServers } });
 
       peer.on("open", () => { api.code = code; cb.onReady(code); });
 
@@ -72,7 +72,7 @@ const Net = (() => {
     let conn = null;
     let myId = null;
     let closed = false;
-    const peer = new Peer();
+    const peer = new Peer(undefined, { config: { iceServers: CONFIG.iceServers } });
 
     const api = {
       send(msg) { if (conn && conn.open) conn.send(msg); },

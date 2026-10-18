@@ -28,7 +28,7 @@ const store = {
 function friendlyError(err) {
   switch (err && err.type) {
     case "peer-unavailable": return "No game found with that code. Check the code and try again.";
-    case "timeout":          return "Could not connect to that game. Check the code and your connection.";
+    case "timeout":          return "Couldn't connect to that game. If you're on the same Wi-Fi as the host, try turning Wi-Fi off and using cellular, or try again.";
     case "browser-incompatible": return "This browser does not support the connection technology this game needs.";
     case "network":
     case "server-error":
@@ -255,20 +255,25 @@ function startJoining(rawCode, rawName) {
   const name = checked.name;
   store.set("tsName", name);
   UI.connecting("Joining game…");
+  const slow = setTimeout(() => {
+    if (UI.isShowing("connecting")) UI.connecting("Joining game…", "Still connecting. This can take a few seconds on some networks.");
+  }, CONFIG.stillConnectingMs);
 
   App.leaving = false;
   App.mode = "client";
   App.code = code;
 
   App.net = Net.join(code, {
-    onOpen: id => { App.me = id; App.net.send({ t: "join", name }); },
+    onOpen: id => { clearTimeout(slow); App.me = id; App.net.send({ t: "join", name }); },
     onMessage: handleMessage,
     onClose: () => {
+      clearTimeout(slow);
       if (App.leaving) return;
       teardown();
       UI.message("Game ended", "The host left or the connection was lost.", "Home", home);
     },
     onError: err => {
+      clearTimeout(slow);
       if (App.leaving) return;
       teardown();
       UI.message("Couldn't join", friendlyError(err), "Back", () => showJoinSetup(code));

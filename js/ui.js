@@ -105,8 +105,8 @@ const UI = (() => {
     if (el) el.textContent = text;
   }
 
-  function connecting(text) {
-    show("connecting", `<h1>${esc(text)}</h1><p class="muted">One moment…</p>`);
+  function connecting(text, sub) {
+    show("connecting", `<h1>${esc(text)}</h1><p class="muted">${esc(sub || "One moment…")}</p>`);
   }
 
   function loading(text) {

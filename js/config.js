@@ -33,7 +33,23 @@ const CONFIG = {
   codeLength: 4,
   codeAlphabet: "ABCDEFGHJKLMNPQRSTUVWXYZ23456789",
   peerPrefix: "trivia-showdown-",
-  joinTimeoutMs: 12000,
+  joinTimeoutMs: 20000,    // allows time for the relay fallback on tricky networks
+  stillConnectingMs: 4000, // after this long the joining screen says it is still working
+
+  // Servers that help two phones find each other (STUN) and relay data when a direct
+  // link is blocked (TURN), as on many home Wi-Fi networks. Setting iceServers replaces
+  // PeerJS's built-in list, so its defaults are repeated here. The Open Relay entries are a
+  // shared free service with public credentials: fine for friends and family, not guaranteed.
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: ["turn:eu-0.turn.peerjs.com:3478", "turn:us-0.turn.peerjs.com:3478"], username: "peerjs", credential: "peerjsp" },
+    { urls: "stun:openrelay.metered.ca:80" },
+    { urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turns:openrelay.metered.ca:443?transport=tcp",
+      ], username: "openrelayproject", credential: "openrelayproject" },
+  ],
 
   // OpenTDB allows 1 request per 5 seconds per IP.
   requestSpacingMs: 5200,

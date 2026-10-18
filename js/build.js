@@ -1,2 +1,2 @@
 // Written by tools/stamp.js. Do not edit.
-const BUILD = "fe4404ff";
+const BUILD = "b40c6c70";

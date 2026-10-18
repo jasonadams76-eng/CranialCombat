@@ -69,6 +69,7 @@ Screens open on a splash with a START GAME button; a link like `.../#K7QX` skips
 - A player who disconnects is marked "(left)" and the game carries on without waiting for them.
 - If the **host** leaves, the game ends for everyone.
 - Joining closes once the game starts.
+- Direct phone-to-phone links are blocked on some home Wi-Fi networks. The game lists STUN and relay (TURN) servers in `js/config.js` (`iceServers`) so it can fall back to a relay. The Open Relay entries are a free shared service with public credentials; if it proves unreliable, swap in a hosted TURN account. If a player still can't connect, turning Wi-Fi off and joining over cellular works.
 
 ## Lobby chat
 
