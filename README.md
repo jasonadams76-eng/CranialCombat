@@ -109,7 +109,7 @@ This is a personal, non-commercial game. Thanks to both services for their free 
 
 ## Sound
 
-The **splash and lobby music are recordings** in `assets/audio/` (`splash.mp3` plays on the splash, join and connecting screens, `lobby.mp3` in the lobby). They are 128 kbps MP3s, about 1.6 MB and 1.9 MB, and fade out and in at their ends so they loop smoothly. The page downloads them in the background when it opens. Music starts on the first tap and waits up to about 2.5 seconds for the recording; if it can't be loaded, the built-in synthesized tune plays instead. There is no music during questions.
+The **splash and lobby music are recordings** in `assets/audio/` (`splash.mp3` plays on the splash, join and connecting screens, `lobby.mp3` in the lobby). They are 128 kbps MP3s, about 1.9 MB and 1.6 MB, and fade out and in at their ends so they loop smoothly. The page downloads them in the background when it opens. Music starts on the first tap and waits up to about 2.5 seconds for the recording; if it can't be loaded, the built-in synthesized tune plays instead. There is no music during questions.
 
 The sound effects (button taps, correct/wrong, scoreboard ticks, winner fanfare) are generated in the browser, so there are no files for them. The speaker button in the corner mutes everything and is remembered per device. Browsers only allow sound after a tap, and on iPhones the ring/silent switch can silence web audio. Music pauses when the page is in the background.
 
