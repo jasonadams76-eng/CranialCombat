@@ -5,8 +5,9 @@
 //   Sound.music("lobby")      start looping music (splash | lobby), or Sound.music(null) for silence
 //   Sound.play("correct")     a one-off effect
 //   Sound.toggle()            mute / unmute (remembered between visits)
+//   Sound.setVolume(0..100)   master volume for music and effects (remembered); 0 mutes, anything above unmutes
 const Sound = (() => {
-  const MUTE_KEY = "tsMuted";
+  const MUTE_KEY = "tsMuted", VOL_KEY = "tsVolume";
   const hz = n => 440 * Math.pow(2, (n - 69) / 12);          // MIDI note number to frequency
   const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -195,7 +196,13 @@ const Sound = (() => {
   const buffers = {};                // recordings named in CONFIG.audioFiles, once loaded
   const listeners = [];
 
-  try { muted = localStorage.getItem(MUTE_KEY) === "1"; } catch (e) { /* ignore */ }
+  let volume = 100;                  // 1..100, kept while muted so unmuting returns to it
+  try {
+    muted = localStorage.getItem(MUTE_KEY) === "1";
+    const v = parseInt(localStorage.getItem(VOL_KEY), 10);
+    if (v >= 1 && v <= 100) volume = v;
+  } catch (e) { /* ignore */ }
+  const level = () => 0.9 * Math.pow(volume / 100, 2);           // a squared curve feels even to the ear
 
   function ensure() {
     if (ctx) return ctx;
@@ -203,7 +210,7 @@ const Sound = (() => {
     if (!AC) return null;
     try { ctx = new AC(); } catch (e) { return null; }
     const comp = ctx.createDynamicsCompressor();                 // keeps loud moments from clipping
-    master = ctx.createGain(); master.gain.value = 0.9;
+    master = ctx.createGain(); master.gain.value = level();
     musicBus = ctx.createGain(); musicBus.gain.value = 0.3;
     sfxBus = ctx.createGain(); sfxBus.gain.value = 0.8;
     musicBus.connect(master); sfxBus.connect(master); master.connect(comp); comp.connect(ctx.destination);
@@ -339,11 +346,23 @@ const Sound = (() => {
 
   function music(name) { if (name !== wanted) waitFrom = 0; wanted = name || null; applyMusic(); }
 
+  function changed() { listeners.forEach(fn => fn(muted, volume)); }
+
   function setMuted(m) {
     muted = !!m;
     try { localStorage.setItem(MUTE_KEY, muted ? "1" : "0"); } catch (e) { /* ignore */ }
     applyMusic();
-    listeners.forEach(fn => fn(muted));
+    changed();
+  }
+
+  // 0 mutes (the previous level is kept); 1..100 sets the level and unmutes.
+  function setVolume(v) {
+    v = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+    if (v === 0) { setMuted(true); return; }
+    volume = v;
+    try { localStorage.setItem(VOL_KEY, String(volume)); } catch (e) { /* ignore */ }
+    if (master) master.gain.setTargetAtTime(level(), ctx.currentTime, 0.02);
+    if (muted) setMuted(false); else changed();
   }
 
   // Renders a sound offline and reports how loud it is. Used by the tests, since nobody is listening there.
@@ -364,8 +383,8 @@ const Sound = (() => {
   }
 
   return {
-    unlockOnGesture, play, music, setMuted, toggle: () => setMuted(!muted),
-    isMuted: () => muted, onChange: fn => listeners.push(fn),
+    unlockOnGesture, play, music, setMuted, setVolume, toggle: () => setMuted(!muted),
+    isMuted: () => muted, getVolume: () => volume, level: () => muted ? 0 : volume, onChange: fn => listeners.push(fn),
     playing: () => current ? { name: current.name, file: !!current.file } : null,     // for tests
     effects: Object.keys(EFFECTS), tracks: Object.keys(MUSIC), renderForTest,
   };

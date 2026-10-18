@@ -347,20 +347,38 @@ const UI = (() => {
     Sound.unlockOnGesture();
     const btn = document.createElement("button");
     btn.id = "sound-btn"; btn.type = "button"; btn.className = "sound-btn";
+    btn.setAttribute("aria-haspopup", "true"); btn.setAttribute("aria-expanded", "false");
+    const panel = document.createElement("div");
+    panel.id = "sound-panel"; panel.className = "sound-panel"; panel.hidden = true;
+    panel.innerHTML = `
+      <label for="vol">Volume <b id="vol-num">100</b>%</label>
+      <input type="range" id="vol" min="0" max="100" step="1" value="100" aria-label="Volume">
+      <button type="button" id="vol-mute" class="secondary"></button>`;
+    const slider = panel.querySelector("#vol"), num = panel.querySelector("#vol-num"), muteBtn = panel.querySelector("#vol-mute");
     const paint = () => {
-      const m = Sound.isMuted();
-      btn.textContent = m ? "🔇" : "🔊";
-      btn.setAttribute("aria-label", m ? "Turn sound on" : "Turn sound off");
-      btn.title = m ? "Turn sound on" : "Turn sound off";
+      const lvl = Sound.level();
+      btn.textContent = lvl === 0 ? "🔇" : lvl < 34 ? "🔈" : lvl < 67 ? "🔉" : "🔊";
+      btn.setAttribute("aria-label", "Volume " + lvl + " percent. Open volume controls");
+      btn.title = "Volume";
+      slider.value = lvl; num.textContent = lvl;
+      slider.style.setProperty("--fill", lvl + "%");
+      muteBtn.textContent = Sound.isMuted() ? "Unmute" : "Mute";
     };
     paint();
-    btn.onclick = () => Sound.toggle();
+    const setOpen = open => { panel.hidden = !open; btn.setAttribute("aria-expanded", open ? "true" : "false"); };
+    btn.onclick = () => setOpen(panel.hidden);
+    slider.oninput = () => Sound.setVolume(slider.value);
+    slider.onchange = () => { if (Sound.level() > 0) Sound.play("click"); };      // a sample at the new level
+    muteBtn.onclick = () => Sound.toggle();
+    document.addEventListener("pointerdown", e => { if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) setOpen(false); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && !panel.hidden) { setOpen(false); btn.focus(); } });
     Sound.onChange(paint);
     document.body.appendChild(btn);
+    document.body.appendChild(panel);
     // One click sound for every button; answers and Ready have their own.
     document.addEventListener("click", e => {
       const b = e.target.closest && e.target.closest("button");
-      if (!b || b.disabled || b.id === "sound-btn") return;
+      if (!b || b.disabled || b.id === "sound-btn" || b.closest("#sound-panel")) return;
       Sound.play(b.dataset.sfx || (b.closest("#answers") ? "select" : "click"));
     });
   }
