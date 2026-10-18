@@ -113,12 +113,29 @@ const UI = (() => {
     show("loading", `<h1>Get ready!</h1><p class="muted">${esc(text)}</p><div class="spinner"></div>`);
   }
 
-  function message(title, text, label, onClick) {
+  // Optional second button (label2, onClick2) is shown as the quieter choice.
+  function message(title, text, label, onClick, label2, onClick2) {
     show("message", `
       <h1>${esc(title)}</h1>
       <p class="muted">${esc(text)}</p>
-      <button class="primary" id="ok">${esc(label)}</button>`);
+      <button class="primary" id="ok">${esc(label)}</button>
+      ${label2 ? `<button class="secondary" id="ok2">${esc(label2)}</button>` : ""}`);
     $("ok").onclick = onClick;
+    if (label2) $("ok2").onclick = onClick2;
+  }
+
+  // A thin strip over the top of any screen ("Reconnecting…"). It lives outside the screen area,
+  // so changing screens doesn't remove it. banner(null) hides it.
+  function banner(text) {
+    let el = document.getElementById("conn-banner");
+    if (!text) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "conn-banner"; el.className = "conn-banner";
+      el.setAttribute("role", "status");
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
   }
 
   // ---------- lobby ----------
@@ -262,6 +279,14 @@ const UI = (() => {
     const buttons = Array.from(document.querySelectorAll("#answers button"));
     const lockAll = () => buttons.forEach(b => { b.disabled = true; });
 
+    // A player who came back mid-question: show an answer they already gave.
+    if (msg.picked !== undefined && msg.picked !== null && buttons[msg.picked]) {
+      qState.answered = true;
+      buttons[msg.picked].classList.add("picked");
+      lockAll();
+      $("status").textContent = "Answer locked in. Waiting for the others…";
+    }
+
     const shownAt = performance.now();
     buttons.forEach(b => {
       b.onclick = () => {
@@ -278,6 +303,9 @@ const UI = (() => {
 
     // Countdown bar. Time runs from the moment the question arrives here.
     const bar = $("bar");
+    if (msg.totalMs && msg.durationMs < msg.totalMs) {   // joined part-way through: start the bar partly used
+      bar.style.clipPath = `inset(0 ${Math.round(100 * (1 - msg.durationMs / msg.totalMs))}% 0 0)`;
+    }
     bar.style.transition = `clip-path ${msg.durationMs}ms linear`;
     requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.clipPath = "inset(0 100% 0 0)"; }));
     const end = performance.now() + msg.durationMs;
@@ -377,7 +405,7 @@ const UI = (() => {
   }
 
   return {
-    splash, setArt, landing, hostSetup, joinSetup, formError, connecting, loading, message,
+    splash, setArt, banner, landing, hostSetup, joinSetup, formError, connecting, loading, message,
     lobby, chatUpdate, chatError, question, progress, reveal, roundEnd, gameOver,
     isShowing: name => current === name,
   };

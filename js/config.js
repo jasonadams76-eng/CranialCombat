@@ -34,6 +34,13 @@ const CONFIG = {
   codeAlphabet: "ABCDEFGHJKLMNPQRSTUVWXYZ23456789",
   peerPrefix: "trivia-showdown-",
   joinTimeoutMs: 20000,    // allows time for the relay fallback on tricky networks
+  // Staying connected. Players say "still here" every heartbeatMs. The host drops anyone it hasn't
+  // heard from in staleMs (a phone that went to the background just disappears without saying goodbye).
+  heartbeatMs: 5000,
+  staleMs: 15000,
+  probeMs: 2500,           // after returning to the game page, how long to wait for the host to answer
+  reconnectAttempts: 8,    // automatic tries to get back in before asking the player
+  reconnectDelayMs: 2000,
   stillConnectingMs: 4000, // after this long the joining screen says it is still working
 
   // Servers that help two phones find each other (STUN) and relay data when a direct

@@ -14,6 +14,9 @@ const HostGame = (() => {
       broadcast: () => {},
       minAdvanceMs: CONFIG.minAdvanceMs,
       now: () => Date.now(),
+      heartbeatMs: CONFIG.heartbeatMs,
+      staleMs: CONFIG.staleMs,
+      send: () => {},          // send(playerId, msg): one message to one player (used to catch up a returning player)
       chatMaxLength: CONFIG.chatMaxLength,
       chatHistory: CONFIG.chatHistory,
       chatRateCount: CONFIG.chatRateCount,
@@ -43,6 +46,11 @@ const HostGame = (() => {
     let phaseStartedAt = 0;    // when the standings / round scoreboard appeared (see next())
     let chatLog = [];          // recent lobby chat, kept for people who join later
     let chatSeq = 0;
+    let curMsg = null;         // the question message as first sent
+    let qEndsAt = 0;
+    let lastGained = {};
+    let lastReveal = null, lastRoundEnd = null, lastGameOver = null, loadingMessage = "";
+    let lastSweepAt = null;
     const chatTimes = new Map();   // playerId -> times of their recent messages (rate limit)
 
     const find = id => players.find(p => p.id === id);
@@ -65,6 +73,7 @@ const HostGame = (() => {
     }
 
     const publicPlayers = () => players.map(p => ({ id: p.id, name: p.name, connected: p.connected }));
+    const sendRoster = () => o.broadcast({ t: "roster", players: publicPlayers() });   // player list without switching screens
     const sendLobby = () => o.broadcast({ t: "lobby", players: publicPlayers(), meta: Object.assign({}, meta) });
 
     // Ranked list, ties share a rank. gainedMap = points earned on the last question.
@@ -85,20 +94,82 @@ const HostGame = (() => {
     }
 
     // ----- lobby -----
-    function addPlayer(id, name) {
-      if (phase !== "lobby") return { ok: false, error: "That game has already started." };
-      if (find(id)) return { ok: true, player: find(id) };
-      if (players.length >= o.maxPlayers) return { ok: false, error: "That game is full." };
+    // A player who comes back (phone slept, page reloaded) joins with the same name. They take over
+    // their old spot if their token matches, or the old connection is gone or has gone quiet.
+    const canTakeOver = (p, token) =>
+      (token && p.token && token === p.token) || !p.connected || o.now() - p.lastSeen > o.staleMs;
+
+    function takeOver(p, newId, token) {
+      const oldId = p.id;
+      chatTimes.delete(oldId);
+      if (cur && cur.answers.has(oldId)) {            // keep an answer already given this question
+        cur.answers.set(newId, cur.answers.get(oldId));
+        cur.answers.delete(oldId);
+      }
+      if (lastReveal) {                                // the standings already on screen refer to the old id
+        lastReveal.results.forEach(x => { if (x.id === oldId) x.id = newId; });
+        if (oldId in lastGained) { lastGained[newId] = lastGained[oldId]; delete lastGained[oldId]; }
+      }
+      p.id = newId; p.connected = true; p.lastSeen = o.now();
+      if (token) p.token = token;
+      if (phase === "lobby") { sendLobby(); systemLine(`${p.name} rejoined`); }
+      else sendRoster();
+      return { ok: true, player: p, replaced: oldId, rejoined: true };
+    }
+
+    function addPlayer(id, name, token) {
+      const existing = find(id);
+      if (existing) { existing.lastSeen = o.now(); return { ok: true, player: existing }; }
       const checked = o.nameCheck(name);
+      const twin = checked.ok
+        ? players.find(p => p.id !== "host" && p.name.toLowerCase() === checked.name.toLowerCase())
+        : null;
+      if (twin && canTakeOver(twin, token)) return takeOver(twin, id, token);
+      if (phase !== "lobby") return { ok: false, error: "That game has already started." };
+      if (players.length >= o.maxPlayers) return { ok: false, error: "That game is full." };
       if (!checked.ok) return { ok: false, code: "name", error: checked.message };
       const p = {
-        id, name: uniqueName(checked.name), score: 0,
+        id, name: uniqueName(checked.name), score: 0, token: token || null, lastSeen: o.now(),
         roundScores: o.rounds.map(() => 0), connected: true,
       };
       players.push(p);
       sendLobby();
       systemLine(`${p.name} joined`);
       return { ok: true, player: p };
+    }
+
+    // Any message from a player counts as "still here".
+    function touch(id) { const p = find(id); if (p) p.lastSeen = o.now(); }
+
+    // Called every heartbeat by the host. Drops players who have gone quiet; returns their ids so the
+    // connections can be closed. If the host's own page was asleep, nobody is blamed for the silence.
+    function sweep() {
+      const now = o.now();
+      const asleep = lastSweepAt !== null && now - lastSweepAt > o.heartbeatMs * 3;
+      lastSweepAt = now;
+      if (asleep) { players.forEach(p => { p.lastSeen = now; }); return []; }
+      const stale = players.filter(p => p.id !== "host" && p.connected && now - p.lastSeen > o.staleMs).map(p => p.id);
+      stale.forEach(removePlayer);
+      return stale;
+    }
+
+    // Brings one returning player up to date with whatever is on everyone else's screen.
+    function resync(id) {
+      const p = find(id);
+      if (!p) return;
+      o.send(id, { t: "roster", players: publicPlayers() });
+      o.send(id, { t: "sync", question: curMsg, score: p.score });
+      if (phase === "question" && curMsg) {
+        o.send(id, Object.assign({}, curMsg, {
+          durationMs: Math.max(0, qEndsAt - o.now()), totalMs: o.questionMs,
+          picked: cur.answers.has(id) ? cur.answers.get(id) : null,
+        }));
+      }
+      // Standings are rebuilt so they show who is connected now, not who was when the screen first appeared.
+      else if (phase === "reveal" && lastReveal) o.send(id, Object.assign({}, lastReveal, { standings: standings(lastGained) }));
+      else if (phase === "roundbreak" && lastRoundEnd) o.send(id, Object.assign({}, lastRoundEnd, { standings: standings() }));
+      else if (phase === "over" && lastGameOver) o.send(id, Object.assign({}, lastGameOver, { standings: standings() }));
+      else if (phase === "loading") o.send(id, { t: "loading", message: loadingMessage });
     }
 
     function removePlayer(id) {
@@ -111,6 +182,7 @@ const HostGame = (() => {
         systemLine(`${p.name} left`);
       } else {
         p.connected = false;
+        sendRoster();
         if (phase === "question") checkAllAnswered();
       }
     }
@@ -120,6 +192,7 @@ const HostGame = (() => {
     function lock(message) {
       if (phase !== "lobby" && phase !== "loading") return false;
       phase = "loading";
+      loadingMessage = message;
       o.broadcast({ t: "loading", message });
       return true;
     }
@@ -196,7 +269,8 @@ const HostGame = (() => {
       qSeq++;
       cur = { id: qSeq, question, answers: new Map() };
       phase = "question";
-      o.broadcast({
+      qEndsAt = o.now() + o.questionMs;
+      curMsg = {
         t: "question", id: cur.id,
         round: r + 1, rounds: o.rounds.length,
         roundName: round.name, difficulty: round.difficulty, points: round.points,
@@ -204,7 +278,8 @@ const HostGame = (() => {
         category: question.category, question: question.question,
         answers: question.answers.slice(),       // never includes which one is correct
         durationMs: o.questionMs,
-      });
+      };
+      o.broadcast(curMsg);
       setTimer(closeQuestion, o.questionMs);
     }
 
@@ -244,11 +319,13 @@ const HostGame = (() => {
       const lastOfRound = q + 1 >= rounds[r].length;
       const finalRound = r + 1 >= o.rounds.length;
       // No timer here: the standings stay up until the host calls next().
-      o.broadcast({
+      lastGained = gainedMap;
+      lastReveal = {
         t: "reveal", id: cur.id, correctIndex, correct: cur.question.correct,
         results, standings: standings(gainedMap),
         nextLabel: !lastOfRound ? "Next Question" : finalRound ? "See Final Results" : "Finish Round",
-      });
+      };
+      o.broadcast(lastReveal);
     }
 
     // Host-only (called locally by the host's screen, never from a network message).
@@ -268,24 +345,26 @@ const HostGame = (() => {
       } else if (r + 1 < o.rounds.length) {
         phase = "roundbreak";
         phaseStartedAt = o.now();
-        o.broadcast({
+        lastRoundEnd = {
           t: "roundEnd", round: r + 1, roundName: o.rounds[r].name,
           nextRoundName: o.rounds[r + 1].name, nextPoints: o.rounds[r + 1].points,
           standings: standings(), nextLabel: `Start ${o.rounds[r + 1].name}`,
-        });
+        };
+        o.broadcast(lastRoundEnd);
       } else {
         phase = "over";
-        o.broadcast({
+        lastGameOver = {
           t: "gameOver", standings: standings(),
           rounds: o.rounds.map(x => ({ name: x.name, points: x.points })),
-        });
+        };
+        o.broadcast(lastGameOver);
       }
     }
 
     function destroy() { clearTimer(); }
 
     return {
-      addPlayer, removePlayer, setMeta, lock, unlock, reset, begin, submitAnswer, next, chat, destroy,
+      addPlayer, removePlayer, touch, sweep, resync, setMeta, lock, unlock, reset, begin, submitAnswer, next, chat, destroy,
       getChat: () => chatLog.slice(),
       getPhase: () => phase,
       getPlayers: () => publicPlayers(),

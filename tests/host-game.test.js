@@ -394,6 +394,128 @@ test("lock / unlock: failed question load returns everyone to the lobby with a n
   assert.strictEqual(last("lobby").meta.code, "ABCD");
 });
 
+// ----- staying connected: heartbeat, rejoin, catch-up -----
+function setupSend() {
+  const sent = [];
+  const env = setup({ send: (id, m) => sent.push({ id, m }) });
+  env.sent = sent;
+  env.sentTo = (id, t) => sent.filter(x => x.id === id && x.m.t === t).map(x => x.m);
+  return env;
+}
+
+test("lobby: a silent player is dropped after staleMs and the rest stay", () => {
+  const { game, timers } = setupSend();
+  game.addPlayer("host", "Jason");
+  game.addPlayer("a", "Amy", "tokA");
+  game.addPlayer("b", "Ben", "tokB");
+  timers.advance(10000); game.touch("a"); game.touch("host");
+  timers.advance(6000);                                   // Ben silent for 16s, Amy for 6s
+  same(game.sweep(), ["b"]);
+  same(game.getPlayers().map(p => p.name), ["Jason", "Amy"]);
+});
+
+test("lobby: rejoining with the same name and token replaces the old entry (no duplicate)", () => {
+  const { game, last } = setupSend();
+  game.addPlayer("host", "Jason");
+  game.addPlayer("a", "Amy", "tokA");
+  const res = game.addPlayer("a2", "Amy", "tokA");          // old connection still looks alive
+  assert(res.ok && res.rejoined && res.replaced === "a");
+  same(last("lobby").players.map(p => p.id), ["host", "a2"]);
+  same(last("lobby").players.map(p => p.name), ["Jason", "Amy"]);
+});
+
+test("lobby: same name without the token only takes over a quiet or gone entry", () => {
+  const { game, timers, last } = setupSend();
+  game.addPlayer("a", "Amy", "tokA");
+  game.addPlayer("b", "Amy", "other");                      // a is alive: this is a different Amy
+  same(last("lobby").players.map(p => p.name), ["Amy", "Amy 2"]);
+  timers.advance(16000);                                    // both quiet now
+  const res = game.addPlayer("c", "Amy", "other");
+  assert(res.rejoined && res.replaced === "a");
+});
+
+test("sweep: a host page that was asleep does not drop everyone on waking", () => {
+  const { game, timers } = setupSend();
+  game.addPlayer("a", "Amy"); game.sweep();
+  timers.advance(60000);                                    // the host's own timers were frozen
+  same(game.sweep(), []);
+  assert.strictEqual(game.getPlayers().length, 1);
+  let dropped = [];                                         // now genuinely quiet; the host sweeps every heartbeat
+  for (let i = 0; i < 4 && !dropped.length; i++) { timers.advance(CONFIG.heartbeatMs); dropped = game.sweep(); }
+  same(dropped, ["a"]);
+});
+
+test("mid-game: a dropped player rejoins with the same name, keeps their score and is caught up", () => {
+  const { game, timers, last, sentTo } = setupSend();
+  game.addPlayer("host", "Jason"); game.addPlayer("a", "Amy", "tokA"); game.addPlayer("b", "Ben", "tokB");
+  game.lock("x"); game.begin(makeQuestions());
+  game.submitAnswer("a", last("question").id, 0);           // Amy answers correctly (+25)
+  game.submitAnswer("host", last("question").id, 0);
+  game.submitAnswer("b", last("question").id, 1);
+  assert.strictEqual(game.getPhase(), "reveal");
+  game.next();                                              // question 2 open
+  game.removePlayer("a");                                   // Amy's phone went to sleep
+  assert.strictEqual(game.getPlayers().find(p => p.name === "Amy").connected, false);
+  timers.advance(5000);
+  const res = game.addPlayer("a2", "amy", "tokA");
+  assert(res.ok && res.rejoined);
+  game.resync("a2");
+  assert.strictEqual(game.getPlayers().find(p => p.name === "Amy").connected, true);
+  const q = sentTo("a2", "question")[0];
+  assert.strictEqual(q.qIndex, 2);
+  assert.strictEqual(q.durationMs, CONFIG.questionSeconds * 1000 - 5000);
+  assert.strictEqual(q.picked, null);
+  assert.strictEqual(sentTo("a2", "sync")[0].score, 25);
+  game.submitAnswer("a2", q.id, 0);                         // and she can answer again
+  assert.strictEqual(last("progress").answered.includes("a2"), true);
+});
+
+test("mid-game: an answer given before the drop is kept and shown again", () => {
+  const { game, last, sentTo } = setupSend();
+  game.addPlayer("a", "Amy", "tokA"); game.addPlayer("b", "Ben", "tokB");
+  game.lock("x"); game.begin(makeQuestions());
+  game.submitAnswer("a", last("question").id, 2);
+  game.addPlayer("a2", "Amy", "tokA"); game.resync("a2");
+  assert.strictEqual(sentTo("a2", "question")[0].picked, 2);
+  assert.strictEqual(game.submitAnswer("a2", last("question").id, 0), false);   // can't answer twice
+});
+
+test("mid-game: catch-up on the standings, round scoreboard and final results screens", () => {
+  const { game, timers, last, sentTo } = setupSend();
+  game.addPlayer("a", "Amy", "tokA"); game.addPlayer("b", "Ben", "tokB");
+  game.lock("x"); game.begin(makeQuestions());
+  timers.advance(20000);                                    // reveal
+  game.removePlayer("a"); game.addPlayer("a2", "Amy", "tokA"); game.resync("a2");
+  assert.strictEqual(sentTo("a2", "reveal").length, 1);
+  const rv = sentTo("a2", "reveal")[0];                      // rebuilt for the new id, and shows Amy as connected
+  assert(rv.standings.some(x => x.id === "a2" && x.connected) && rv.results.some(x => x.id === "a2"));
+  for (let i = 0; i < 4; i++) { game.next(); timers.advance(20000); }   // finish round 1
+  game.next();
+  assert.strictEqual(game.getPhase(), "roundbreak");
+  game.removePlayer("a2"); game.addPlayer("a3", "Amy", "tokA"); game.resync("a3");
+  assert.strictEqual(sentTo("a3", "roundEnd").length, 1);
+  assert.strictEqual(last("lobby") && last("lobby").players.length, 2);   // the lobby message was never re-sent mid-game
+});
+
+test("mid-game: strangers still can't join, and a live player's name can't be taken without the token", () => {
+  const { game, last } = setupSend();
+  game.addPlayer("a", "Amy", "tokA"); game.addPlayer("b", "Ben", "tokB");
+  game.lock("x"); game.begin(makeQuestions());
+  assert.strictEqual(game.addPlayer("z", "Zed", "tokZ").ok, false);
+  assert.strictEqual(game.addPlayer("z", "Amy", "tokZ").ok, false);   // Amy is connected and recently heard from
+  assert.strictEqual(game.getPlayers().filter(p => p.connected).length, 2);
+});
+
+test("mid-game: dropping and returning is announced as a roster update, never as a lobby screen", () => {
+  const { game, log } = setupSend();
+  game.addPlayer("a", "Amy", "tokA"); game.addPlayer("b", "Ben", "tokB");
+  game.lock("x"); game.begin(makeQuestions());
+  const lobbiesBefore = log.filter(m => m.t === "lobby").length;
+  game.removePlayer("a"); game.addPlayer("a2", "Amy", "tokA");
+  assert.strictEqual(log.filter(m => m.t === "lobby").length, lobbiesBefore);
+  assert(log.filter(m => m.t === "roster").length >= 2);
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try { fn(); console.log("  ok   " + name); }

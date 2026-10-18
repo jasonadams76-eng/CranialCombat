@@ -17,6 +17,11 @@ const App = {
   lastQuestion: null,
   myScore: 0,
   leaving: false,
+  join: null,        // player: { code, name, token, attempts } so a dropped connection can be re-opened
+  joined: false,     // player: the host has accepted us
+  reconnecting: false,
+  heard: 0,          // player: when the host last sent anything
+  timers: {},        // beat, sweep, retry, probe
 };
 
 // ---------- small helpers ----------
@@ -44,13 +49,37 @@ function savedName() {
   return Filter.checkName(n, { maxLength: CONFIG.maxNameLength }).ok ? n : "";
 }
 
+// ---------- keep the screen awake while playing ----------
+// Phones that sleep drop the connection. Not every browser supports this; it is only a help.
+let wake = null;
+async function acquireWake() {
+  try {
+    if (!navigator.wakeLock || wake || document.visibilityState !== "visible") return;
+    wake = await navigator.wakeLock.request("screen");
+    wake.addEventListener("release", () => { wake = null; });
+  } catch (e) { wake = null; }
+}
+function releaseWake() {
+  try { if (wake) wake.release(); } catch (e) { /* ignore */ }
+  wake = null;
+}
+
+function stopTimers() {
+  Object.keys(App.timers).forEach(k => { clearInterval(App.timers[k]); clearTimeout(App.timers[k]); });
+  App.timers = {};
+}
+
 function teardown() {
   App.leaving = true;
+  stopTimers();
+  releaseWake();
+  UI.banner(null);
   if (App.engine) App.engine.destroy();
   if (App.net) App.net.close();
   Object.assign(App, {
     mode: null, me: null, net: null, engine: null, code: null, category: null,
     categories: [], players: [], chat: [], note: null, lastQuestion: null, myScore: 0,
+    join: null, joined: false, reconnecting: false, heard: 0,
   });
 }
 
@@ -110,6 +139,20 @@ function sendChat(text) {
 function handleMessage(msg) {
   switch (msg.t) {
     case "joined":
+      App.joined = true;
+      App.reconnecting = false;
+      if (App.join) App.join.attempts = 0;
+      stopTimer("retry");
+      UI.banner(null);
+      break;
+    case "pong":
+      break;
+    case "roster":     // who is connected, without changing screens
+      App.players = msg.players;
+      break;
+    case "sync":       // what a returning player needs before the screen they missed arrives
+      App.lastQuestion = msg.question || App.lastQuestion;
+      App.myScore = msg.score || 0;
       break;
     case "lobby":
       App.players = msg.players;
@@ -173,6 +216,10 @@ function hostControls() {
   return { isHost: App.mode === "host", onNext: () => App.engine && App.engine.next() };
 }
 
+function stopTimer(name) {
+  clearInterval(App.timers[name]); clearTimeout(App.timers[name]); delete App.timers[name];
+}
+
 function sendAnswer(choice) {
   const id = App.lastQuestion.id;
   if (App.mode === "host") App.engine.submitAnswer("host", id, choice);
@@ -195,12 +242,21 @@ function startHosting(rawName) {
       if (App.net) App.net.broadcast(msg);
       handleMessage(msg);
     },
+    send: (id, msg) => {
+      if (id === "host") handleMessage(msg);
+      else if (App.net) App.net.send(id, msg);
+    },
   });
+  acquireWake();
 
   App.net = Net.host({
     onReady: code => {
       App.code = code;
       App.engine.addPlayer("host", name);
+      // Players that go quiet (a phone in the background) are dropped, so they don't linger as ghosts.
+      App.timers.sweep = setInterval(() => {
+        if (App.engine && App.net) App.engine.sweep().forEach(id => App.net.kick(id));
+      }, CONFIG.heartbeatMs);
       App.engine.setMeta({ code, category: null, note: null });
       Api.fetchCategories()
         .then(list => { App.categories = list; renderLobby(); })
@@ -209,14 +265,19 @@ function startHosting(rawName) {
         });
     },
     onMessage: (id, msg) => {
-      if (msg.t === "join") {
-        const res = App.engine.addPlayer(id, msg.name);
+      App.engine.touch(id);          // any message counts as "still here"
+      if (msg.t === "ping") {
+        App.net.send(id, { t: "pong" });
+      } else if (msg.t === "join") {
+        const res = App.engine.addPlayer(id, msg.name, msg.token);
         if (!res.ok) {
           App.net.send(id, { t: "error", code: res.code, message: res.error });
           App.net.kick(id);
         } else {
+          if (res.replaced) App.net.kick(res.replaced);   // the old, dead connection of a returning player
           App.net.send(id, { t: "joined", you: id });
           App.net.send(id, { t: "chatHistory", messages: App.engine.getChat() });
+          if (res.rejoined && App.engine.getPhase() !== "lobby") App.engine.resync(id);
         }
       } else if (msg.t === "answer") {
         App.engine.submitAnswer(id, msg.id, msg.choice);
@@ -247,6 +308,11 @@ async function hostBegin() {
 }
 
 // ---------- joining ----------
+function newToken() {
+  try { return crypto.getRandomValues(new Uint32Array(3)).join("-"); }
+  catch (e) { return String(Math.random()).slice(2) + Date.now(); }
+}
+
 function startJoining(rawCode, rawName) {
   const code = rawCode.trim().toUpperCase();
   if (code.length !== CONFIG.codeLength) { UI.formError(`Enter the ${CONFIG.codeLength}-letter join code.`); return; }
@@ -255,31 +321,83 @@ function startJoining(rawCode, rawName) {
   const name = checked.name;
   store.set("tsName", name);
   UI.connecting("Joining game…");
-  const slow = setTimeout(() => {
-    if (UI.isShowing("connecting")) UI.connecting("Joining game…", "Still connecting. This can take a few seconds on some networks.");
-  }, CONFIG.stillConnectingMs);
 
   App.leaving = false;
   App.mode = "client";
   App.code = code;
+  App.join = { code, name, token: newToken(), attempts: 0 };   // the token lets the host recognise us if we have to reconnect
+  acquireWake();
+  App.timers.slow = setTimeout(() => {
+    if (UI.isShowing("connecting")) UI.connecting("Joining game…", "Still connecting. This can take a few seconds on some networks.");
+  }, CONFIG.stillConnectingMs);
+  openClient();
+}
 
-  App.net = Net.join(code, {
-    onOpen: id => { clearTimeout(slow); App.me = id; App.net.send({ t: "join", name }); },
-    onMessage: handleMessage,
-    onClose: () => {
-      clearTimeout(slow);
-      if (App.leaving) return;
-      teardown();
-      UI.message("Game ended", "The host left or the connection was lost.", "Home", home);
+// Opens (or re-opens) the connection to the host. Used for the first join and for every reconnect.
+function openClient() {
+  const info = App.join;
+  App.net = Net.join(info.code, {
+    onOpen: id => {
+      stopTimer("slow");
+      App.me = id;
+      App.net.send({ t: "join", name: info.name, token: info.token });
+      stopTimer("beat");
+      App.timers.beat = setInterval(() => { if (App.net) App.net.send({ t: "ping" }); }, CONFIG.heartbeatMs);
     },
-    onError: err => {
-      clearTimeout(slow);
-      if (App.leaving) return;
-      teardown();
-      UI.message("Couldn't join", friendlyError(err), "Back", () => showJoinSetup(code));
-    },
+    onMessage: msg => { App.heard = Date.now(); handleMessage(msg); },
+    onClose: () => { stopTimer("slow"); connectionLost(); },
+    onError: err => { stopTimer("slow"); connectionLost(err); },
   });
 }
+
+// The connection dropped (phone slept, network changed). Before the host accepted us, that is a plain
+// failure. After, we quietly try to get back in under the same name.
+function connectionLost(err) {
+  if (App.leaving || App.mode !== "client") return;
+  if (!App.joined && !App.reconnecting) {
+    const code = App.code;
+    teardown();
+    if (err) UI.message("Couldn't join", friendlyError(err), "Back", () => showJoinSetup(code));
+    else UI.message("Game ended", "The host left or the connection was lost.", "Home", home);
+    return;
+  }
+  if (App.timers.retry) return;                          // a retry is already scheduled
+  App.timers.retry = setTimeout(() => { delete App.timers.retry; reconnect(); }, App.reconnecting ? CONFIG.reconnectDelayMs : 0);
+}
+
+function reconnect() {
+  if (App.leaving || App.mode !== "client" || !App.join) return;
+  stopTimer("retry"); stopTimer("probe"); stopTimer("beat");
+  const old = App.net;
+  App.net = null;
+  if (old) old.close();                                  // its callbacks are silenced once closed
+  App.reconnecting = true;
+  if (++App.join.attempts > CONFIG.reconnectAttempts) { giveUpReconnecting(); return; }
+  UI.banner("Connection lost. Reconnecting…");
+  openClient();
+}
+
+function giveUpReconnecting() {
+  UI.banner(null);
+  const info = App.join;
+  UI.message("Couldn't get back in",
+    "The connection to the game was lost and couldn't be restored. The host may have left, or this network is blocking the connection.",
+    "Try again", () => { info.attempts = 0; UI.banner("Connection lost. Reconnecting…"); reconnect(); },
+    "Home", home);
+}
+
+// Coming back to the page after the phone slept or another app was in front: check the link is still alive.
+function checkAfterReturn() {
+  if (document.visibilityState !== "visible") return;
+  if (App.mode) acquireWake();
+  if (App.mode !== "client" || !App.joined || App.reconnecting || !App.net) return;
+  const asked = Date.now();
+  App.net.send({ t: "ping" });
+  stopTimer("probe");
+  App.timers.probe = setTimeout(() => { if (App.heard < asked) reconnect(); }, CONFIG.probeMs);
+}
+document.addEventListener("visibilitychange", checkAfterReturn);
+window.addEventListener("online", () => { if (App.mode === "client" && App.joined) reconnect(); });
 
 // ---------- start ----------
 // A perfect game should equal CONFIG.targetTotal. Warn if the settings drift.
