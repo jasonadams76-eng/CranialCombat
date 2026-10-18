@@ -17,9 +17,10 @@ A multiplayer browser trivia game powered by the [Open Trivia DB](https://opentd
 A perfect game scores exactly **1000** points.
 
 - Each question has a **20 second** timer. It ends early once everyone has answered. No answer scores 0.
-- When a question ends, everyone sees the correct answer and the **updated standings**. They stay up until the **host clicks Next**, so nobody is rushed. Players see "Waiting for the host…".
-- The round scoreboard works the same way: the host clicks to start the next round.
-- At the end there is a final leaderboard with a per-round breakdown. The host can start another game with the same players.
+- When a question ends, everyone sees whether they were right, the correct answer and their own score. There are no standings after a question.
+- Everyone then presses **Ready**. The next question starts as soon as every player has. The host also has **Continue anyway** if someone has wandered off. A player who leaves does not hold the game up.
+- After each round there is a **round scoreboard**. Rows are revealed one at a time, from last place up to first (tap the board to show it all at once). Everyone presses Ready to start the next round.
+- **Final Standings** reveals the winner with confetti, fireworks and sound effects (ties share the banner). Then choose **Return to Lobby** or **Exit Game**. The host returning to the lobby brings everyone back; players wait for the host.
 - Up to 8 players.
 
 ## Running it
@@ -41,6 +42,8 @@ js/api.js         OpenTDB: category list and question fetching (host only)
 js/filter.js      name and chat filter (blocked words, disguises, links, reserved names)
 js/game.js        host rules engine: players, timer, scoring, standings (no DOM, no network)
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
+js/audio.js       synthesized music and sound effects (Web Audio, no audio files)
+js/fx.js          confetti and fireworks canvas
 js/ui.js          all screens and click handling
 js/main.js        wires UI, network and engine together
 tests/            node tests for the rules engine and the filter
@@ -91,6 +94,10 @@ No word filter is perfect: unusual spellings and other languages can slip throug
 ## Settings
 
 Edit `js/config.js` to change the question timer, round names, points per round, questions per round, or the maximum number of players.
+
+## Sound
+
+Music (splash and lobby) and effects (button taps, correct/wrong, scoreboard ticks, winner fanfare) are generated in the browser, so there are no audio files to host. The speaker button in the corner mutes everything and is remembered per device. Browsers only allow sound after a tap, so music starts on the first tap. On iPhones the ring/silent switch can silence web audio. Music is paused when the page is in the background. To use your own recordings, set `CONFIG.audioFiles` in `js/config.js` (for example `{ splash: "assets/audio/splash.mp3" }`); anything not listed stays synthesized. Reveal and celebration timing is also in `js/config.js` (`revealRowMs`, `revealWinnerPauseMs`, `celebrationMs`). Reduced-motion settings skip the animations.
 
 ## Tests
 

@@ -48,7 +48,7 @@ const HostGame = (() => {
     let chatSeq = 0;
     let curMsg = null;         // the question message as first sent
     let qEndsAt = 0;
-    let lastGained = {};
+    const readySet = new Set();   // players who pressed Ready on the current reveal / round scoreboard
     let lastReveal = null, lastRoundEnd = null, lastGameOver = null, loadingMessage = "";
     let lastSweepAt = null;
     const chatTimes = new Map();   // playerId -> times of their recent messages (rate limit)
@@ -106,10 +106,8 @@ const HostGame = (() => {
         cur.answers.set(newId, cur.answers.get(oldId));
         cur.answers.delete(oldId);
       }
-      if (lastReveal) {                                // the standings already on screen refer to the old id
-        lastReveal.results.forEach(x => { if (x.id === oldId) x.id = newId; });
-        if (oldId in lastGained) { lastGained[newId] = lastGained[oldId]; delete lastGained[oldId]; }
-      }
+      if (lastReveal) lastReveal.results.forEach(x => { if (x.id === oldId) x.id = newId; });
+      if (readySet.delete(oldId)) readySet.add(newId);
       p.id = newId; p.connected = true; p.lastSeen = o.now();
       if (token) p.token = token;
       if (phase === "lobby") { sendLobby(); systemLine(`${p.name} rejoined`); }
@@ -165,10 +163,11 @@ const HostGame = (() => {
           picked: cur.answers.has(id) ? cur.answers.get(id) : null,
         }));
       }
-      // Standings are rebuilt so they show who is connected now, not who was when the screen first appeared.
-      else if (phase === "reveal" && lastReveal) o.send(id, Object.assign({}, lastReveal, { standings: standings(lastGained) }));
-      else if (phase === "roundbreak" && lastRoundEnd) o.send(id, Object.assign({}, lastRoundEnd, { standings: standings() }));
-      else if (phase === "over" && lastGameOver) o.send(id, Object.assign({}, lastGameOver, { standings: standings() }));
+      // "resumed" tells the screen to appear at once instead of replaying the animated reveal.
+      // Standings are rebuilt so they show who is connected now.
+      else if (phase === "reveal" && lastReveal) o.send(id, Object.assign({}, lastReveal, { ready: Array.from(readySet), resumed: true }));
+      else if (phase === "roundbreak" && lastRoundEnd) o.send(id, Object.assign({}, lastRoundEnd, { standings: standings(), ready: Array.from(readySet), resumed: true }));
+      else if (phase === "over" && lastGameOver) o.send(id, Object.assign({}, lastGameOver, { standings: standings(), resumed: true }));
       else if (phase === "loading") o.send(id, { t: "loading", message: loadingMessage });
     }
 
@@ -184,6 +183,7 @@ const HostGame = (() => {
         p.connected = false;
         sendRoster();
         if (phase === "question") checkAllAnswered();
+        else checkAllReady();
       }
     }
 
@@ -205,6 +205,7 @@ const HostGame = (() => {
 
     function reset() {
       clearTimer();
+      readySet.clear();
       players = players.filter(p => p.connected);
       players.forEach(p => { p.score = 0; p.roundScores = o.rounds.map(() => 0); });
       rounds = null; r = 0; q = 0; cur = null;
@@ -266,6 +267,7 @@ const HostGame = (() => {
     function startQuestion() {
       const question = rounds[r][q];
       const round = o.rounds[r];
+      readySet.clear();
       qSeq++;
       cur = { id: qSeq, question, answers: new Map() };
       phase = "question";
@@ -304,37 +306,56 @@ const HostGame = (() => {
       clearTimer();
       phase = "reveal";
       phaseStartedAt = o.now();
+      readySet.clear();
       const round = o.rounds[r];
       const correctIndex = cur.question.answers.indexOf(cur.question.correct);
-      const gainedMap = {};
       const results = players.map(p => {
         const choice = cur.answers.has(p.id) ? cur.answers.get(p.id) : null;
         const correct = choice === correctIndex;
         const gained = correct ? round.points : 0;
         p.score += gained;
         p.roundScores[r] += gained;
-        gainedMap[p.id] = gained;
-        return { id: p.id, name: p.name, choice, correct, gained };
+        return { id: p.id, name: p.name, choice, correct, gained, score: p.score };
       });
-      const lastOfRound = q + 1 >= rounds[r].length;
-      const finalRound = r + 1 >= o.rounds.length;
-      // No timer here: the standings stay up until the host calls next().
-      lastGained = gainedMap;
+      // No standings here: the scoreboard only appears at the end of a round. Each player
+      // sees their own result and presses Ready; the game moves on when everyone has.
       lastReveal = {
         t: "reveal", id: cur.id, correctIndex, correct: cur.question.correct,
-        results, standings: standings(gainedMap),
-        nextLabel: !lastOfRound ? "Next Question" : finalRound ? "See Final Results" : "Finish Round",
+        results, ready: [],
+        lastOfRound: q + 1 >= rounds[r].length,
       };
       o.broadcast(lastReveal);
+      checkAllReady();                       // nobody connected has anything to wait for
     }
 
-    // Host-only (called locally by the host's screen, never from a network message).
-    // Moves on from the standings, or from a round scoreboard.
+    // A player presses Ready on a reveal or a round scoreboard.
+    function ready(playerId) {
+      if (phase !== "reveal" && phase !== "roundbreak") return false;
+      const p = find(playerId);
+      if (!p || !p.connected) return false;
+      readySet.add(playerId);
+      o.broadcast({ t: "ready", ready: Array.from(readySet) });
+      checkAllReady();
+      return true;
+    }
+
+    function checkAllReady() {
+      if (phase !== "reveal" && phase !== "roundbreak") return;
+      const live = connected();
+      if (live.length > 0 && live.every(p => readySet.has(p.id))) go();
+    }
+
+    function go() {
+      if (phase === "reveal") advance();
+      else if (phase === "roundbreak") { r++; q = 0; startQuestion(); }
+    }
+
+    // Host override ("Continue anyway"): moves on without waiting for players who haven't pressed Ready.
+    // Called locally by the host's screen, never from a network message.
     function next() {
       // A double click on the button would otherwise skip the next screen too.
       if ((phase === "reveal" || phase === "roundbreak") && o.now() - phaseStartedAt < o.minAdvanceMs) return;
-      if (phase === "reveal") advance();
-      else if (phase === "roundbreak") { r++; q = 0; startQuestion(); }
+      go();
     }
 
     function advance() {
@@ -345,10 +366,11 @@ const HostGame = (() => {
       } else if (r + 1 < o.rounds.length) {
         phase = "roundbreak";
         phaseStartedAt = o.now();
+        readySet.clear();
         lastRoundEnd = {
           t: "roundEnd", round: r + 1, roundName: o.rounds[r].name,
           nextRoundName: o.rounds[r + 1].name, nextPoints: o.rounds[r + 1].points,
-          standings: standings(), nextLabel: `Start ${o.rounds[r + 1].name}`,
+          standings: standings(), ready: [],
         };
         o.broadcast(lastRoundEnd);
       } else {
@@ -364,7 +386,7 @@ const HostGame = (() => {
     function destroy() { clearTimer(); }
 
     return {
-      addPlayer, removePlayer, touch, sweep, resync, setMeta, lock, unlock, reset, begin, submitAnswer, next, chat, destroy,
+      addPlayer, removePlayer, touch, sweep, resync, ready, setMeta, lock, unlock, reset, begin, submitAnswer, next, chat, destroy,
       getChat: () => chatLog.slice(),
       getPhase: () => phase,
       getPlayers: () => publicPlayers(),

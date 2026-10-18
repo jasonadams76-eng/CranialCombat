@@ -34,6 +34,17 @@ const CONFIG = {
   codeAlphabet: "ABCDEFGHJKLMNPQRSTUVWXYZ23456789",
   peerPrefix: "trivia-showdown-",
   joinTimeoutMs: 20000,    // allows time for the relay fallback on tricky networks
+  // Scoreboard reveals (round scoreboards and the final standings), last place first.
+  revealRowMs: 1100,        // time between rows
+  revealWinnerPauseMs: 2000,// the pause before first place is shown
+  celebrationMs: 9000,      // how long the winner's confetti and fireworks run
+
+  // Sounds. Everything is made in the browser by js/audio.js. To use your own recording instead,
+  // put the file in assets/audio/ and name it here, e.g.  splash: "assets/audio/splash.mp3"
+  // Names: music: splash, lobby.  effects: click, select, ready, correct, wrong, tick, drumroll,
+  // crash, fanfare, launch, burst, crackle, applause.
+  audioFiles: {},
+
   // Staying connected. Players say "still here" every heartbeatMs. The host drops anyone it hasn't
   // heard from in staleMs (a phone that went to the background just disappears without saying goodbye).
   heartbeatMs: 5000,

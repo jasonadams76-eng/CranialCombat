@@ -9,9 +9,20 @@ const UI = (() => {
   const esc = s => String(s).replace(/[&<>"']/g,
     c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  function clearTimers() { if (tick) { clearInterval(tick); tick = null; } }
+  let revealTimers = [];             // the row-by-row scoreboard reveal
+  function clearTimers() {
+    if (tick) { clearInterval(tick); tick = null; }
+    revealTimers.forEach(clearTimeout); revealTimers = [];
+  }
+
+  // Which music plays on which screen. Other screens (questions, scoreboards) have none.
+  const MUSIC_FOR = { splash: "splash", landing: "splash", hostSetup: "splash", joinSetup: "splash", connecting: "splash", lobby: "lobby" };
+  const reducedMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+
   function show(name, html) {
     clearTimers(); current = name;
+    if (typeof Fx !== "undefined") Fx.stop();
+    if (typeof Sound !== "undefined") Sound.music(MUSIC_FOR[name] || null);
     stage.className = name === "splash" ? "stage splash-stage" : "stage";
     app.className = name === "splash" ? "splash" : "panel";
     app.innerHTML = html;
@@ -29,7 +40,7 @@ const UI = (() => {
 
   function standingsTable(list, me) {
     return `<table class="standings"><tbody>${list.map(s => `
-      <tr class="${s.id === me ? "me" : ""} ${s.rank === 1 && s.score > 0 ? "lead" : ""} ${s.connected ? "" : "gone"}">
+      <tr class="row pending ${s.id === me ? "me" : ""} ${s.rank === 1 && s.score > 0 ? "lead" : ""} ${s.connected ? "" : "gone"}" data-rank="${s.rank}">
         <td class="rank">${medal(s.rank)}</td>
         <td class="name">${esc(s.name)}${s.id === me ? ' <span class="you">you</span>' : ""}${s.connected ? "" : ' <span class="muted">(left)</span>'}</td>
         <td class="gain">${s.gained > 0 ? "+" + s.gained : ""}</td>
@@ -330,13 +341,86 @@ const UI = (() => {
     }
   }
 
-  // ---------- reveal / standings ----------
-  // msg: reveal message. q: the question message it belongs to. h: { isHost, onNext }
+  // ---------- sound button and button clicks ----------
+  function setup() {
+    if (typeof Sound === "undefined") return;
+    Sound.unlockOnGesture();
+    const btn = document.createElement("button");
+    btn.id = "sound-btn"; btn.type = "button"; btn.className = "sound-btn";
+    const paint = () => {
+      const m = Sound.isMuted();
+      btn.textContent = m ? "🔇" : "🔊";
+      btn.setAttribute("aria-label", m ? "Turn sound on" : "Turn sound off");
+      btn.title = m ? "Turn sound on" : "Turn sound off";
+    };
+    paint();
+    btn.onclick = () => Sound.toggle();
+    Sound.onChange(paint);
+    document.body.appendChild(btn);
+    // One click sound for every button; answers and Ready have their own.
+    document.addEventListener("click", e => {
+      const b = e.target.closest && e.target.closest("button");
+      if (!b || b.disabled || b.id === "sound-btn") return;
+      Sound.play(b.dataset.sfx || (b.closest("#answers") ? "select" : "click"));
+    });
+  }
+  const play = (name, opts) => { if (typeof Sound !== "undefined") Sound.play(name, opts); };
+
+  // ---------- Ready ----------
+  // Everyone presses Ready after a question and after a round scoreboard; the host's screen also
+  // gets "Continue anyway" for a player who is connected but not pressing it.
+  let readyCtx = null;               // { h, me, ids, mine }
+
+  function readyBlock(h, hidden) {
+    return `
+      <div class="ready${hidden ? " pending" : ""}" id="ready-area">
+        <button class="primary" id="ready" data-sfx="ready">Ready</button>
+        <p class="status center" id="ready-status" role="status"></p>
+        ${h.isHost ? `<button class="secondary" id="force">Continue anyway</button>` : ""}
+      </div>`;
+  }
+
+  function wireReady(h, me, ids) {
+    readyCtx = { h, me, ids: ids || [], mine: (ids || []).includes(me) };
+    $("ready").onclick = () => {
+      if (readyCtx.mine) return;
+      readyCtx.mine = true;
+      renderReady();
+      h.onReady();
+    };
+    if (h.isHost) $("force").onclick = () => h.onForce();
+    renderReady();
+  }
+
+  function renderReady() {
+    const btn = $("ready"), st = $("ready-status");
+    if (!btn || !readyCtx) return;
+    const { h, ids, mine } = readyCtx;
+    btn.disabled = mine;
+    btn.textContent = mine ? "Ready ✓" : "Ready";
+    const live = h.players().filter(p => p.connected);
+    const waiting = live.filter(p => !ids.includes(p.id));
+    const names = waiting.slice(0, 3).map(p => esc(p.name)).join(", ") + (waiting.length > 3 ? ` +${waiting.length - 3} more` : "");
+    st.innerHTML = !waiting.length ? "Everyone is ready…"
+      : `${live.length - waiting.length} of ${live.length} ready` + (mine ? `. Waiting for ${names}` : "");
+  }
+
+  // ids: who has pressed Ready (omit to just redraw, e.g. after the player list changed)
+  function readyUpdate(ids) {
+    if (!readyCtx || !$("ready")) return;
+    if (ids) { readyCtx.ids = ids; readyCtx.mine = ids.includes(readyCtx.me) || readyCtx.mine; }
+    renderReady();
+  }
+
+  // ---------- reveal after a question ----------
+  // msg: reveal message. q: the question message it belongs to. h: { isHost, players, onReady, onForce }
   function reveal(msg, q, me, h) {
     const mine = msg.results.find(r => r.id === me);
-    let headline = "⏰ Time's up!", cls = "bad";
-    if (mine && mine.correct) { headline = `✅ Correct! +${mine.gained}`; cls = "good"; }
+    let headline = "⏰ Time's up!", cls = "bad", sfx = "wrong";
+    if (mine && mine.correct) { headline = `✅ Correct! +${mine.gained}`; cls = "good"; sfx = "correct"; }
     else if (mine && mine.choice !== null) { headline = "❌ Not quite"; cls = "bad"; }
+    const finalRound = q.round === q.rounds;
+    const next = !msg.lastOfRound ? "" : finalRound ? "Next: the final standings." : "Next: the round scoreboard.";
 
     show("reveal", `
       <div class="topbar">
@@ -348,35 +432,80 @@ const UI = (() => {
       <div class="answers">
         ${q.answers.map((a, i) => `<button disabled data-k="${"ABCD"[i]}" class="${i === msg.correctIndex ? "correct" : ""} ${mine && i === mine.choice && i !== msg.correctIndex ? "wrong" : ""}">${esc(a)}</button>`).join("")}
       </div>
-      <h2>Standings</h2>
-      ${standingsTable(msg.standings, me)}
-      ${nextControl(h, msg.nextLabel)}`);
-    wireNext(h);
+      <div class="score-line">Your score <b>${mine ? mine.score : 0}</b></div>
+      ${readyBlock(h)}
+      ${next ? `<p class="muted center small">${next}</p>` : ""}`);
+    wireReady(h, me, msg.ready);
+    if (!msg.resumed) play(sfx);
   }
 
-  // The host gets a button; everyone else is told to wait.
-  function nextControl(h, label) {
-    return h.isHost
-      ? `<button class="primary" id="next">${esc(label)}</button>`
-      : `<p class="muted center">Waiting for the host to continue…</p>`;
-  }
-  function wireNext(h) {
-    if (!h.isHost) return;
-    $("next").onclick = e => { e.target.disabled = true; h.onNext(); };   // disabled so a double click can't skip ahead
+  // ---------- scoreboards: rows appear one at a time, last place first ----------
+  // root: element holding the rows (tr.row[data-rank]). opts: { instant, onWinner(rows), onDone() }
+  function revealBoard(root, opts) {
+    const rows = Array.from(root.querySelectorAll("tr.row"));
+    const ranks = Array.from(new Set(rows.map(r => Number(r.dataset.rank)))).sort((x, y) => y - x);   // last place first
+    const groups = ranks.map(rank => ({ rank, rows: rows.filter(r => Number(r.dataset.rank) === rank) }));
+    let gi = 0, finished = false, winnerShown = false;
+    const later = (fn, ms) => revealTimers.push(setTimeout(fn, ms));
+
+    const showWinner = g => {
+      if (winnerShown) return;
+      winnerShown = true;
+      if (opts.onWinner) opts.onWinner(g.rows);
+    };
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      revealTimers.forEach(clearTimeout); revealTimers = [];
+      groups.forEach(g => g.rows.forEach(r => r.classList.remove("pending")));
+      if (groups.length && !opts.noWinner) showWinner(groups[groups.length - 1]);
+      opts.onDone();
+    };
+
+    if (opts.instant || reducedMotion() || !groups.length) { finish(); return { skip: finish }; }
+
+    const step = () => {
+      if (finished) return;
+      const g = groups[gi];
+      const reveal = () => {
+        if (finished) return;
+        g.rows.forEach(r => { r.classList.remove("pending"); r.classList.add("shown"); });
+        gi++;
+        if (g.rank === 1 || gi >= groups.length) {
+          showWinner(g);
+          later(() => { finished = true; opts.onDone(); }, 900);
+        } else {
+          play("tick", { n: gi });
+          later(step, CONFIG.revealRowMs);
+        }
+      };
+      if (g.rank === 1 || gi === groups.length - 1) {            // first place: a drumroll, then the reveal
+        play("drumroll");
+        later(reveal, CONFIG.revealWinnerPauseMs);
+      } else reveal();
+    };
+    later(step, 700);
+    return { skip: finish };
   }
 
-  // msg: roundEnd message. h: { isHost, onNext }
+  // msg: roundEnd message. h: as for reveal
   function roundEnd(msg, me, h) {
     show("roundEnd", `
       <h1>${esc(msg.roundName)} complete!</h1>
-      ${standingsTable(msg.standings.map(s => Object.assign({}, s, { gained: 0 })), me)}
+      <div class="board" id="board">
+        ${standingsTable(msg.standings.map(s => Object.assign({}, s, { gained: 0 })), me)}
+      </div>
+      <p class="muted center small" id="skip-hint">Tap the scoreboard to skip the countdown.</p>
       <p class="muted center">Up next: <strong>${esc(msg.nextRoundName)}</strong>, ${msg.nextPoints} points per question.</p>
-      ${nextControl(h, msg.nextLabel)}`);
-    wireNext(h);
+      ${readyBlock(h, true)}`);
+    wireReady(h, me, msg.ready);
+    const done = () => { const area = $("ready-area"); if (area) area.classList.remove("pending"); const hint = $("skip-hint"); if (hint) hint.remove(); };
+    const board = revealBoard($("board"), { instant: msg.resumed, noWinner: true, onDone: done });
+    $("board").onclick = () => board.skip();
   }
 
   // ---------- final results ----------
-  // s: { me, isHost, onAgain, onLeave }
+  // s: { me, isHost, onReturn, onExit }
   function gameOver(msg, s) {
     const top = msg.standings.filter(p => p.rank === 1);
     const banner = top.length > 1
@@ -384,28 +513,67 @@ const UI = (() => {
       : `${esc(top[0].name)} wins!`;
 
     show("gameOver", `
-      <h1>Game Over!</h1>
-      <div class="winner">${banner}</div>
-      <table class="standings final">
-        <thead><tr><th></th><th>Player</th>${msg.rounds.map(r => `<th>${esc(r.name)}</th>`).join("")}<th>Total</th></tr></thead>
-        <tbody>${msg.standings.map(p => `
-          <tr class="${p.id === s.me ? "me" : ""} ${p.connected ? "" : "gone"}">
-            <td class="rank">${medal(p.rank)}</td>
-            <td class="name">${esc(p.name)}${p.id === s.me ? ' <span class="you">you</span>' : ""}</td>
-            ${p.roundScores.map(x => `<td>${x}</td>`).join("")}
-            <td class="score">${p.score}</td>
-          </tr>`).join("")}</tbody>
-      </table>
-      ${s.isHost
-        ? `<button class="primary" id="again">Play Again (same players)</button>`
-        : `<p class="muted center">Waiting for the host to start another game…</p>`}
-      <button class="secondary" id="leave">${s.isHost ? "End Game" : "Leave"}</button>`);
-    if (s.isHost) $("again").onclick = s.onAgain;
-    $("leave").onclick = s.onLeave;
+      <h1>Final Standings</h1>
+      <div class="winner pending" id="winner">${banner}</div>
+      <div class="board" id="board">
+        <table class="standings final">
+          <thead><tr><th></th><th>Player</th>${msg.rounds.map(r => `<th>${esc(r.name)}</th>`).join("")}<th>Total</th></tr></thead>
+          <tbody>${msg.standings.map(p => `
+            <tr class="row pending ${p.id === s.me ? "me" : ""} ${p.rank === 1 ? "lead" : ""} ${p.connected ? "" : "gone"}" data-rank="${p.rank}">
+              <td class="rank">${medal(p.rank)}</td>
+              <td class="name">${esc(p.name)}${p.id === s.me ? ' <span class="you">you</span>' : ""}</td>
+              ${p.roundScores.map(x => `<td>${x}</td>`).join("")}
+              <td class="score">${p.score}</td>
+            </tr>`).join("")}</tbody>
+        </table>
+      </div>
+      <p class="muted center small" id="skip-hint">Tap the scoreboard to skip the countdown.</p>
+      <div class="end-buttons pending" id="end-buttons">
+        <button class="primary" id="return">Return to Lobby</button>
+        <button class="secondary" id="exit">Exit Game</button>
+      </div>`);
+
+    const celebrate = () => {
+      $("winner").classList.remove("pending");
+      $("winner").classList.add("shown");
+      play("crash"); setTimeout(() => play("fanfare"), 120); setTimeout(() => play("applause"), 700);
+      if (typeof Fx !== "undefined") {
+        Fx.celebrate({ ms: CONFIG.celebrationMs, onLaunch: () => play("launch"), onBurst: () => { play("burst"); if (Math.random() < 0.5) play("crackle"); } });
+      }
+    };
+    const done = () => {
+      $("end-buttons").classList.remove("pending");
+      const hint = $("skip-hint"); if (hint) hint.remove();
+    };
+    // A player who came back after the reveal just sees the final table, with no replay.
+    if (msg.resumed) { $("winner").classList.remove("pending"); }
+    const board = revealBoard($("board"), { instant: msg.resumed, noWinner: !!msg.resumed, onWinner: celebrate, onDone: done });
+    $("board").onclick = () => board.skip();
+
+    gameOverButtons(s);
+  }
+
+  // Leaving as host ends the game for everyone, so that choice asks first.
+  function gameOverButtons(s) {
+    $("return").onclick = s.onReturn;
+    $("exit").onclick = () => {
+      if (!s.isHost) { s.onExit(); return; }
+      $("end-buttons").innerHTML = `
+        <p class="center">End the game for everyone?</p>
+        <button class="primary" id="exit-yes">Yes, exit</button>
+        <button class="secondary" id="exit-no">Stay</button>`;
+      $("exit-yes").onclick = s.onExit;
+      $("exit-no").onclick = () => {
+        $("end-buttons").innerHTML = `
+          <button class="primary" id="return">Return to Lobby</button>
+          <button class="secondary" id="exit">Exit Game</button>`;
+        gameOverButtons(s);
+      };
+    };
   }
 
   return {
-    splash, setArt, banner, landing, hostSetup, joinSetup, formError, connecting, loading, message,
+    setup, splash, setArt, banner, readyUpdate, landing, hostSetup, joinSetup, formError, connecting, loading, message,
     lobby, chatUpdate, chatError, question, progress, reveal, roundEnd, gameOver,
     isShowing: name => current === name,
   };

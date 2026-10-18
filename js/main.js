@@ -149,6 +149,10 @@ function handleMessage(msg) {
       break;
     case "roster":     // who is connected, without changing screens
       App.players = msg.players;
+      UI.readyUpdate();
+      break;
+    case "ready":      // who has pressed Ready on the current reveal or scoreboard
+      UI.readyUpdate(msg.ready);
       break;
     case "sync":       // what a returning player needs before the screen they missed arrives
       App.lastQuestion = msg.question || App.lastQuestion;
@@ -184,7 +188,7 @@ function handleMessage(msg) {
       UI.progress(msg, App.me, App.players.filter(p => p.connected).length);
       break;
     case "reveal": {
-      const mine = msg.standings.find(s => s.id === App.me);
+      const mine = msg.results.find(r => r.id === App.me);
       if (mine) App.myScore = mine.score;
       UI.reveal(msg, App.lastQuestion, App.me, hostControls());
       break;
@@ -196,8 +200,12 @@ function handleMessage(msg) {
       App.myScore = 0;
       UI.gameOver(msg, {
         me: App.me, isHost: App.mode === "host",
-        onAgain: () => App.engine.reset(),
-        onLeave: home,
+        // The host's button brings everyone back to the lobby. A player's button waits for that.
+        onReturn: () => {
+          if (App.mode === "host") App.engine.reset();
+          else UI.message("Back to the lobby", "Waiting for the host to bring everyone back to the lobby…", "Exit Game", home);
+        },
+        onExit: home,
       });
       break;
     case "error": {
@@ -211,9 +219,17 @@ function handleMessage(msg) {
   }
 }
 
-// Only the host's own screen can move the game on; players just wait.
+// Everyone presses Ready to move on. The host's screen also has "Continue anyway".
 function hostControls() {
-  return { isHost: App.mode === "host", onNext: () => App.engine && App.engine.next() };
+  return {
+    isHost: App.mode === "host",
+    players: () => App.players,
+    onReady: () => {
+      if (App.mode === "host") App.engine.ready("host");
+      else if (App.net) App.net.send({ t: "ready" });
+    },
+    onForce: () => App.engine && App.engine.next(),
+  };
 }
 
 function stopTimer(name) {
@@ -279,6 +295,8 @@ function startHosting(rawName) {
           App.net.send(id, { t: "chatHistory", messages: App.engine.getChat() });
           if (res.rejoined && App.engine.getPhase() !== "lobby") App.engine.resync(id);
         }
+      } else if (msg.t === "ready") {
+        App.engine.ready(id);
       } else if (msg.t === "answer") {
         App.engine.submitAnswer(id, msg.id, msg.choice);
       } else if (msg.t === "chat") {
@@ -412,6 +430,7 @@ window.addEventListener("online", () => { if (App.mode === "client" && App.joine
 // A link like  .../index.html#K7QX  skips the splash and opens the join screen with the code filled in.
 App.start = function () {
   UI.setArt();
+  UI.setup();
   const hashCode = location.hash.replace("#", "").trim().toUpperCase();
   if (hashCode.length === CONFIG.codeLength) showJoinSetup(hashCode);
   else UI.splash({ onStart: home });

@@ -209,6 +209,32 @@ input:focus, select:focus { outline: none; border-color: var(--cyan); box-shadow
 .chat-form input { flex: 1; min-width: 0; }
 .chat-form button { text-align: center; padding: 8px 18px; font-weight: 700; }
 
+/* ---------- sound button ---------- */
+.sound-btn {
+  position: fixed; top: 10px; right: 10px; z-index: 60; width: 46px; height: 46px; min-height: 0; padding: 0;
+  display: grid; place-items: center; font-size: 1.3rem; text-align: center; border-radius: 50%;
+  background: rgba(8,14,34,.85);
+}
+
+/* ---------- Ready ---------- */
+.score-line { margin: 14px 0 0; font-weight: 600; color: var(--muted); text-align: center; }
+.score-line b { font-family: var(--display); font-weight: 400; font-size: 2rem; color: var(--chrome); margin-left: 8px; text-shadow: 0 0 12px rgba(40,212,255,.7); }
+.ready.pending, .end-buttons.pending, .winner.pending { visibility: hidden; }   /* keeps their space so nothing jumps */
+.ready .status { margin-top: 12px; min-height: 26px; }
+.ready .primary:disabled { opacity: 1; border-color: var(--good); box-shadow: 0 0 16px rgba(59,224,138,.6); color: var(--good); }
+
+/* ---------- scoreboard reveal: one row at a time, last place first ---------- */
+.board { cursor: pointer; }
+.standings .row.pending { visibility: hidden; }
+.standings .row.shown { animation: rowin .6s ease-out; }
+.standings .row.shown.lead { animation: rowin .6s ease-out, champ 1.4s ease-out; }
+@keyframes rowin { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+@keyframes champ { 0% { filter: brightness(2.2); } 100% { filter: none; } }
+.winner.shown { animation: pop .8s cubic-bezier(.2,1.5,.4,1); }
+@keyframes pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+.end-buttons .center { margin: 8px 0 0; }
+.fx-canvas { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+
 /* ---------- reconnecting strip ---------- */
 .conn-banner {
   position: fixed; top: 0; left: 0; right: 0; z-index: 50; padding: 10px 16px; text-align: center; font-weight: 700;
@@ -245,7 +271,7 @@ input:focus, select:focus { outline: none; border-color: var(--cyan); box-shadow
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .clash, .timer.urgent, .spinner { animation: none; }
+  .clash, .timer.urgent, .spinner, .standings .row.shown, .standings .row.shown.lead, .winner.shown { animation: none; }
   .clash { opacity: .35; }
   .spinner { border-top-color: var(--cyan); }
   button { transition: none; }

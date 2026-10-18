@@ -175,12 +175,21 @@ test("disconnect mid-question: game does not wait for the player who left", () =
   assert.strictEqual(game.getPhase(), "question");
   game.removePlayer("c");                       // c was the only one left to answer
   assert.strictEqual(game.getPhase(), "reveal");
-  const st = last("reveal").standings;
-  assert.strictEqual(st.find(s => s.id === "c").connected, false);
+  assert.strictEqual(last("reveal").results.find(r => r.id === "c").choice, null);
+  assert.strictEqual(game.getPlayers().find(p => p.id === "c").connected, false);
   assert.strictEqual(game.submitAnswer("c", q.id, 0), false);
 });
 
-test("standings: ranked by score, ties share a rank, gained shown", () => {
+// Plays one whole round: answer(id, questionMsg) gives each player's pick (or null for none), then everyone presses Ready.
+function playRound(game, last, ids, answer) {
+  for (let i = 0; i < CONFIG.questionsPerRound; i++) {
+    const q = last("question");
+    ids.forEach(id => { const c = answer(id, q); if (c !== null) game.submitAnswer(id, q.id, c); });
+    ids.forEach(id => game.ready(id));
+  }
+}
+
+test("reveal: each result carries the points gained and the running score, and there are no standings", () => {
   const { game, last } = setup();
   ["a", "b", "c"].forEach(id => game.addPlayer(id, id.toUpperCase()));
   game.lock("x"); game.begin(makeQuestions());
@@ -189,76 +198,120 @@ test("standings: ranked by score, ties share a rank, gained shown", () => {
   game.submitAnswer("b", q.id, right);
   game.submitAnswer("c", q.id, right);
   game.submitAnswer("a", q.id, (right + 1) % 4);
-  const st = last("reveal").standings;
-  same(st.map(s => [s.id, s.rank, s.score, s.gained]),
-    [["b", 1, 25, 25], ["c", 1, 25, 25], ["a", 3, 0, 0]]);
+  const rev = last("reveal");
+  assert.strictEqual(rev.standings, undefined);
+  same(rev.results.map(r => [r.id, r.gained, r.score, r.correct]), [["a", 0, 0, false], ["b", 25, 25, true], ["c", 25, 25, true]]);
+  same(rev.ready, []);
+  assert.strictEqual(rev.correct, "right");
+});
+
+test("round scoreboard: ranked by score, ties share a rank", () => {
+  const { game, last } = setup();
+  ["a", "b", "c"].forEach(id => game.addPlayer(id, id.toUpperCase()));
+  game.lock("x"); game.begin(makeQuestions());
+  playRound(game, last, ["a", "b", "c"], (id, q) => id === "a" ? (q.answers.indexOf("right") + 1) % 4 : q.answers.indexOf("right"));
+  assert.strictEqual(game.getPhase(), "roundbreak");
+  const st = last("roundEnd").standings;
+  same(st.map(s => [s.id, s.rank, s.score]), [["b", 1, 125], ["c", 1, 125], ["a", 3, 0]]);
 });
 
 test("round break shows standings and announces the next round", () => {
   const { game, last, timers } = setup();
   game.addPlayer("a", "A");
   game.lock("x"); game.begin(makeQuestions());
-  for (let i = 0; i < 5; i++) { timers.advance(20000); game.next(); }
+  for (let i = 0; i < 5; i++) { timers.advance(20000); game.ready("a"); }
   const rb = last("roundEnd");
   assert.strictEqual(rb.roundName, "Round 1");
   assert.strictEqual(rb.nextRoundName, "Round 2");
   assert.strictEqual(rb.nextPoints, 75);
-  assert.strictEqual(rb.nextLabel, "Start Round 2");
   assert.strictEqual(last("question").roundName, "Round 1");  // next round has not started
   timers.advance(600000);                                     // the scoreboard never moves on by itself
   assert.strictEqual(game.getPhase(), "roundbreak");
-  game.next();
+  game.ready("a");
   assert.strictEqual(last("question").roundName, "Round 2");
   assert.strictEqual(last("question").qIndex, 1);
 });
 
-test("pacing: standings wait for the host, no timer moves the game on", () => {
+test("pacing: the reveal waits for every connected player to press Ready, and no timer moves it on", () => {
   const { game, last, timers, log } = setup();
-  game.addPlayer("a", "A");
+  game.addPlayer("a", "A"); game.addPlayer("b", "B");
   game.lock("x"); game.begin(makeQuestions());
   const q1 = last("question");
-  timers.advance(20000);                                      // question time runs out
+  assert.strictEqual(game.ready("a"), false);                 // Ready means nothing during a question
+  timers.advance(20000);
   assert.strictEqual(game.getPhase(), "reveal");
-  const rev = last("reveal");
-  assert.strictEqual(rev.nextLabel, "Next Question");
-  assert.strictEqual(rev.revealMs, undefined);
   const before = log.length;
   timers.advance(10 * 60 * 1000);                             // ten minutes pass
   assert.strictEqual(game.getPhase(), "reveal");
   assert.strictEqual(log.length, before);                     // nothing was sent
-  game.next();
+  assert.strictEqual(game.ready("a"), true);
+  same(last("ready").ready, ["a"]);
+  assert.strictEqual(game.getPhase(), "reveal");              // still waiting for B
+  game.ready("a");                                            // pressing twice changes nothing
+  assert.strictEqual(game.getPhase(), "reveal");
+  game.ready("b");
   assert.strictEqual(game.getPhase(), "question");
   assert.strictEqual(last("question").qIndex, 2);
   assert.notStrictEqual(last("question").id, q1.id);
-  game.next();                                                // next() during a question does nothing
-  assert.strictEqual(last("question").qIndex, 2);
+  assert.strictEqual(game.ready("a"), false);                 // and a stray Ready after that is ignored
   assert.strictEqual(game.getPhase(), "question");
+  assert.strictEqual(game.ready("nobody"), false);
 });
 
-test("pacing: button labels, double clicks and the final results", () => {
-  const { game, last, timers } = setup({ minAdvanceMs: 600 });   // the real double-click guard is on
-  game.addPlayer("a", "A");
+test("pacing: a player who leaves does not hold everyone up, and the host can continue anyway", () => {
+  const { game, last, timers } = setup();
+  game.addPlayer("host", "H"); game.addPlayer("b", "B"); game.addPlayer("c", "C");
   game.lock("x"); game.begin(makeQuestions());
-  const labels = [];
+  timers.advance(20000);
+  game.ready("host"); game.ready("b");
+  assert.strictEqual(game.getPhase(), "reveal");              // waiting for C
+  game.removePlayer("c");                                     // C's phone drops
+  assert.strictEqual(game.getPhase(), "question");
+  assert.strictEqual(last("question").qIndex, 2);
+  timers.advance(20000);
+  game.ready("host");                                         // B hasn't pressed Ready (connected but idle)
+  assert.strictEqual(game.getPhase(), "reveal");
+  game.next();                                                // host override: "Continue anyway"
+  assert.strictEqual(last("question").qIndex, 3);
+});
+
+test("pacing: a player who returns after dropping must press Ready like everyone else", () => {
+  const { game, last, timers } = setup();
+  game.addPlayer("a", "A", "ta"); game.addPlayer("b", "B", "tb");
+  game.lock("x"); game.begin(makeQuestions());
+  timers.advance(20000);
+  game.ready("a");
+  game.removePlayer("b");                                     // B drops: A was the only one left to wait for
+  assert.strictEqual(game.getPhase(), "question");
+  assert.strictEqual(game.ready("b"), false);                 // a dropped player's Ready is ignored
+  game.addPlayer("b2", "B", "tb");                            // B comes back
+  timers.advance(20000);
+  assert.strictEqual(game.getPhase(), "reveal");
+  game.ready("a");
+  assert.strictEqual(game.getPhase(), "reveal");              // waiting for B again
+  game.ready("b2");
+  assert.strictEqual(last("question").qIndex, 3);
+});
+
+test("pacing: round scoreboards, the final results, and the double-click guard on the host override", () => {
+  const { game, last, timers } = setup({ minAdvanceMs: 600 });   // the real double-click guard is on
+  game.addPlayer("a", "A"); game.addPlayer("b", "B");
+  game.lock("x"); game.begin(makeQuestions());
+  const lastOfRound = [];
   for (let n = 0; n < 15; n++) {
     timers.advance(20000);
-    labels.push(last("reveal").nextLabel);
-    game.next();                                              // too soon after the standings appeared: ignored
+    lastOfRound.push(last("reveal").lastOfRound);
+    game.next();                                              // "Continue anyway" too soon after the reveal appeared: ignored
     assert.strictEqual(game.getPhase(), "reveal");
-    timers.advance(700);
-    game.next();
-    game.next();                                              // double click: second one must not skip the next screen
+    game.ready("a"); game.ready("b");
     if (n % 5 === 4 && n < 14) {
-      assert.strictEqual(game.getPhase(), "roundbreak");      // the scoreboard was not skipped
-      game.next();                                            // too soon: ignored
-      assert.strictEqual(game.getPhase(), "roundbreak");
-      timers.advance(700);
-      game.next();
+      assert.strictEqual(game.getPhase(), "roundbreak");      // the scoreboard appears only at the end of a round
+      game.ready("a"); game.ready("b");
+    } else if (n < 14) {
+      assert.strictEqual(game.getPhase(), "question");        // and not after the other questions
     }
   }
-  same(labels.slice(0, 5), ["Next Question", "Next Question", "Next Question", "Next Question", "Finish Round"]);
-  assert.strictEqual(labels[9], "Finish Round");
-  assert.strictEqual(labels[14], "See Final Results");
+  same(lastOfRound, [false, false, false, false, true, false, false, false, false, true, false, false, false, false, true]);
   assert.strictEqual(game.getPhase(), "over");
   const over = last("gameOver");
   same(over.rounds.map(r => r.name), ["Round 1", "Round 2", "Final Round"]);
@@ -379,7 +432,7 @@ test("reset: keeps connected players, zeroes scores, returns to lobby", () => {
   same(last("lobby").players.map(p => p.id), ["a"]);
   game.lock("x"); game.begin(makeQuestions());
   timers.advance(20000);
-  assert.strictEqual(last("reveal").standings[0].score, 0);
+  assert.strictEqual(last("reveal").results.every(x => x.score === 0), true);
 });
 
 test("lock / unlock: failed question load returns everyone to the lobby with a note", () => {
@@ -487,10 +540,10 @@ test("mid-game: catch-up on the standings, round scoreboard and final results sc
   timers.advance(20000);                                    // reveal
   game.removePlayer("a"); game.addPlayer("a2", "Amy", "tokA"); game.resync("a2");
   assert.strictEqual(sentTo("a2", "reveal").length, 1);
-  const rv = sentTo("a2", "reveal")[0];                      // rebuilt for the new id, and shows Amy as connected
-  assert(rv.standings.some(x => x.id === "a2" && x.connected) && rv.results.some(x => x.id === "a2"));
-  for (let i = 0; i < 4; i++) { game.next(); timers.advance(20000); }   // finish round 1
-  game.next();
+  const rv = sentTo("a2", "reveal")[0];                      // rebuilt for the new id
+  assert(rv.results.some(x => x.id === "a2") && rv.resumed === true);
+  for (let i = 0; i < 4; i++) { game.ready("a2"); game.ready("b"); timers.advance(20000); }   // finish round 1
+  game.ready("a2"); game.ready("b");
   assert.strictEqual(game.getPhase(), "roundbreak");
   game.removePlayer("a2"); game.addPlayer("a3", "Amy", "tokA"); game.resync("a3");
   assert.strictEqual(sentTo("a3", "roundEnd").length, 1);
