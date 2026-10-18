@@ -220,12 +220,15 @@ const Sound = (() => {
   const WAIT_FOR_FILE_MS = 2500;     // how long music waits for a recording before the built-in tune stands in
   let waitTimer = 0, waitFrom = 0;
 
+  // Adds the build id to a file address so a changed recording is never served from an old cache.
+  const stamped = url => (typeof BUILD !== "undefined" && BUILD) ? url + (url.indexOf("?") < 0 ? "?" : "&") + "v=" + BUILD : url;
+
   function prefetch() {
     const names = Object.keys(files()).filter(n => files()[n] && !fileState[n]);
     if (typeof fetch !== "function") return;
     names.forEach(n => { fileState[n] = "loading"; });
     names.reduce((chain, n) => chain.then(() =>
-      fetch(files()[n]).then(r => { if (!r.ok) throw new Error("missing"); return r.arrayBuffer(); })
+      fetch(stamped(files()[n])).then(r => { if (!r.ok) throw new Error("missing"); return r.arrayBuffer(); })
         .then(bytes => { raw[n] = bytes; decodeIfNeeded(); })
         .catch(() => { fileState[n] = "failed"; applyMusic(); })), Promise.resolve());
   }

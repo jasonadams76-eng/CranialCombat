@@ -113,7 +113,7 @@ The **splash and lobby music are recordings** in `assets/audio/` (`splash.mp3` p
 
 The sound effects (button taps, correct/wrong, scoreboard ticks, winner fanfare) are generated in the browser, so there are no files for them. The speaker button in the corner mutes everything and is remembered per device. Browsers only allow sound after a tap, and on iPhones the ring/silent switch can silence web audio. Music pauses when the page is in the background.
 
-To change the music, replace the MP3 files (rename them, for example `splash2.mp3`, so browsers don't keep the old copy) and update the names in `CONFIG.audioFiles` in `js/config.js`. The same setting can swap in a recording for any sound effect (names: click, select, ready, correct, wrong, tick, drumroll, crash, fanfare, launch, burst, crackle, applause). `CONFIG.musicFileGain` sets how loud the recordings are. Reveal and celebration timing (`revealRowMs`, `revealWinnerPauseMs`, `celebrationMs`) is in the same file, and reduced-motion settings skip the animations.
+To change the music, replace the MP3 files (keeping the names, or updating them in `CONFIG.audioFiles` in `js/config.js`) and run `node tools/stamp.js`. The build id is added to the music addresses, so browsers fetch the new files. The same setting can swap in a recording for any sound effect (names: click, select, ready, correct, wrong, tick, drumroll, crash, fanfare, launch, burst, crackle, applause). `CONFIG.musicFileGain` sets how loud the recordings are. Reveal and celebration timing (`revealRowMs`, `revealWinnerPauseMs`, `celebrationMs`) is in the same file, and reduced-motion settings skip the animations.
 
 ## Tests
 
