@@ -15,12 +15,14 @@ const root = path.join(__dirname, "..");
 const read = p => fs.readFileSync(path.join(root, p));
 
 const files = [];
-for (const dir of ["css", "js", "assets"]) {
-  for (const f of fs.readdirSync(path.join(root, dir)).sort()) {
-    if (dir === "js" && f === "build.js") continue;   // it holds the id itself
-    files.push(`${dir}/${f}`);
+function walk(dir) {                                  // every file under dir, including subfolders
+  for (const e of fs.readdirSync(path.join(root, dir), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const rel = `${dir}/${e.name}`;
+    if (e.isDirectory()) walk(rel);
+    else if (rel !== "js/build.js") files.push(rel);   // build.js holds the id itself
   }
 }
+["css", "js", "assets"].forEach(walk);
 const hash = crypto.createHash("sha1");
 files.forEach(f => { hash.update(f); hash.update(read(f)); });
 const id = hash.digest("hex").slice(0, 8);
