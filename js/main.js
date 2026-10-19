@@ -162,7 +162,7 @@ function showJoinSetup(code, error) {
 function renderLobby() {
   const isHost = App.mode === "host";
   UI.lobby({
-    code: App.code, players: App.players, me: App.me, isHost,
+    code: App.code, players: App.players, me: App.me, isHost, name: App.myName || (App.players.find(p => p.id === App.me) || {}).name,
     category: App.category, categories: App.categories, note: App.note,
     onCategory: id => {
       App.category = App.categories.find(c => c.id === id) || null;   // null = random

@@ -48,6 +48,7 @@ js/build.js       the build id, written by stamp.js
 js/config.js      rounds, points, timers, player limit, join-code settings
 js/api.js         question sources (Open Trivia DB and The Trivia API), session token, repeat tracking (host only)
 js/filter.js      name and chat filter (blocked words, disguises, links, reserved names)
+js/invite.js      "Challenge a friend": text-message invitation (number check, message, sms link)
 js/scores.js      personal Top 10, saved per player name in the browser
 js/game.js        host rules engine: players, timer, scoring, standings (no DOM, no network)
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
@@ -86,6 +87,13 @@ Screens open on a splash with a START GAME button; a link like `.../#K7QX` skips
 - If the **host** leaves, the game ends for everyone.
 - Joining closes once the game starts.
 - Direct phone-to-phone links are blocked on some home Wi-Fi networks. The game lists STUN and relay (TURN) servers in `js/config.js` (`iceServers`) so it can fall back to a relay. The Open Relay entries are a free shared service with public credentials; if it proves unreliable, swap in a hosted TURN account. If a player still can't connect, turning Wi-Fi off and joining over cellular works.
+
+## Challenge a friend
+In the lobby, anyone (host or player) can open **Challenge a friend** under the player list and text someone the join code, until the lobby is full. A web page can't send a text by itself, so the button opens your phone's messaging app with the number and a message already filled in ("Jason challenges you to Cranial Combat trivia! Tap to join: <link> (code ABCD)"); you tap Send there. The link opens the game with the code already entered. The game never stores or transmits phone numbers.
+
+- **Type a number**: works everywhere that can open a text message.
+- **Pick from contacts**: only shown where the browser has a contact picker (Chrome on Android, over https).
+- **Share…**: shown where the browser has a share sheet (mainly iPhone); choose Messages and a contact there.
 
 ## Lobby chat
 
@@ -137,9 +145,10 @@ node tests/host-game.test.js
 node tests/filter.test.js
 node tests/api.test.js
 node tests/scores.test.js
+node tests/invite.test.js
 ```
 
-The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, changing an answer until the question locks, solo mode locking, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names and chat messages are blocked and that innocent ones (Scunthorpe, Dickinson, "this hit me", "1000000 points", and so on) are not. The engine tests also cover chat: filtering, the rate limit, history, and lobby-only. The third covers the question sources with fake network answers: session token reuse, expiry and reset, repeat tracking, category mapping and fallback both ways. The fourth covers the personal Top 10: ranking, ties, the ten-score limit, separate lists per name and damaged storage. No dependencies needed.
+The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, changing an answer until the question locks, solo mode locking, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names and chat messages are blocked and that innocent ones (Scunthorpe, Dickinson, "this hit me", "1000000 points", and so on) are not. The engine tests also cover chat: filtering, the rate limit, history, and lobby-only. The third covers the question sources with fake network answers: session token reuse, expiry and reset, repeat tracking, category mapping and fallback both ways. The fourth covers the personal Top 10: ranking, ties, the ten-score limit, separate lists per name and damaged storage. The fifth covers the invitation: phone-number checks, the message, and the Android and iPhone text-message links. No dependencies needed.
 
 ## Notes and limits
 

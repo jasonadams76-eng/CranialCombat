@@ -316,3 +316,10 @@ input:focus, select:focus { outline: none; border-color: var(--cyan); box-shadow
   .spinner { border-top-color: var(--cyan); }
   button { transition: none; }
 }
+
+/* Challenge a friend */
+.invite { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--cyan); border-radius: 10px; background: rgba(8,14,34,.6); text-align: left; }
+.invite summary { cursor: pointer; font-weight: 700; color: var(--chrome); min-height: 32px; display: flex; align-items: center; }
+.invite-row { display: flex; gap: 8px; margin-top: 8px; }
+.invite-row input { flex: 1; min-width: 0; }
+.invite .secondary { width: 100%; }

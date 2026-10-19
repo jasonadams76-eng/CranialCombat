@@ -279,6 +279,40 @@ const UI = (() => {
   }
 
   // s: { code, players, me, isHost, category, categories, note, chat, onCategory, onStart, onChat, onLeave }
+  function inviteFull(full) {
+    const box = $("invite");
+    if (!box) return;
+    ["invite-num", "invite-send", "invite-contacts", "invite-share"].forEach(id => { const e = $(id); if (e) e.disabled = full; });
+    $("invite-full").hidden = !full;
+  }
+
+  // "Challenge a friend": opens the phone's messaging app with the invitation filled in.
+  function wireInvite(s) {
+    const err = m => { $("invite-error").textContent = m || ""; };
+    const text = () => Invite.message(s.name, s.code, Invite.joinLink(s.code));
+    const send = numbers => { Invite.open(Invite.smsLink(numbers, text(), Invite.isIos())); };
+    $("invite-num").oninput = () => err("");
+    $("invite-send").onclick = () => {
+      const r = Invite.cleanNumber($("invite-num").value);
+      if (!r.ok) { err(r.message); return; }
+      err(""); send([r.number]); $("invite-num").value = "";
+    };
+    const c = $("invite-contacts");
+    if (c) c.onclick = async () => {
+      err("");
+      try {
+        const nums = await Invite.pickContacts();
+        if (nums.length) send(nums); else err("None of the chosen contacts had a usable phone number.");
+      } catch (e) { if (e && e.name !== "AbortError") err("Couldn't open your contacts. Type the number instead."); }
+    };
+    const sh = $("invite-share");
+    if (sh) sh.onclick = async () => {
+      err("");
+      try { await navigator.share({ title: "Cranial Combat", text: text() }); }
+      catch (e) { if (e && e.name !== "AbortError") err("Couldn't open sharing. Type the number instead."); }
+    };
+  }
+
   function lobby(s) {
     const link = /^https?:/.test(location.protocol) ? `${location.origin}${location.pathname}#${s.code}` : null;
     const catName = s.category ? s.category.name : "Random (all categories)";
@@ -287,6 +321,7 @@ const UI = (() => {
       $("lobby-players").innerHTML = playersHtml(s.players, s.me);
       $("lobby-count").textContent = s.players.length;
       $("lobby-note").textContent = s.note || "";
+      inviteFull(s.players.length >= CONFIG.maxPlayers);
       if (s.isHost) {
         const sel = $("category");
         if (sel.options.length - 1 !== s.categories.length) fillCategories(sel, s.categories, s.category && s.category.id);
@@ -307,6 +342,18 @@ const UI = (() => {
           : `<div class="code-label">Category</div><div id="lobby-cat" class="cat-name">${esc(catName)}</div>`}
       </div>
       <ul class="players" id="lobby-players">${playersHtml(s.players, s.me)}</ul>
+      <details class="invite" id="invite">
+        <summary>Challenge a friend</summary>
+        <p class="muted small">Text someone the join code. Your messaging app opens with the message ready; tap Send there.</p>
+        <div class="invite-row">
+          <input id="invite-num" type="tel" inputmode="tel" autocomplete="off" placeholder="Phone number" aria-label="Friend's phone number">
+          <button type="button" id="invite-send">Send challenge</button>
+        </div>
+        ${Invite.contactsSupported() ? `<button type="button" class="secondary" id="invite-contacts">Pick from contacts</button>` : ""}
+        ${Invite.canShare() ? `<button type="button" class="secondary" id="invite-share">Share…</button>` : ""}
+        <p class="form-error" id="invite-error" role="alert"></p>
+        <p class="muted small" id="invite-full" hidden>The lobby is full.</p>
+      </details>
       <div class="chat">
         <h2>Chat</h2>
         <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
@@ -328,6 +375,8 @@ const UI = (() => {
       $("start").onclick = s.onStart;
     }
     $("leave").onclick = s.onLeave;
+    wireInvite(s);
+    inviteFull(s.players.length >= CONFIG.maxPlayers);
 
     chatRender(s.chat || [], s.me);
     const input = $("chat-input");
