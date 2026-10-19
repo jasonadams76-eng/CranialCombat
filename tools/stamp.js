@@ -31,7 +31,14 @@ fs.writeFileSync(path.join(root, "js/build.js"),
   `// Written by tools/stamp.js. Do not edit.\nconst BUILD = "${id}";\n`);
 
 let html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-html = html.replace(/(href="css\/[\w.-]+|src="js\/[\w.-]+)(\?v=[\w]+)?"/g, `$1?v=${id}"`);
+html = html.replace(/(href="css\/[\w.-]+|src="js\/[\w.-]+|href="assets\/icons\/[\w.-]+|href="manifest\.webmanifest)(\?v=[\w]+)?"/g, `$1?v=${id}"`);
 html = html.replace(/<meta name="build" content="[^"]*">/, `<meta name="build" content="${id}">`);
 fs.writeFileSync(path.join(root, "index.html"), html);
+// The manifest names the home-screen icons; stamp those too so a changed icon is not served from an old cache.
+const mpath = path.join(root, "manifest.webmanifest");
+if (fs.existsSync(mpath)) {
+  let m = fs.readFileSync(mpath, "utf8");
+  m = m.replace(/("src": "assets\/icons\/[\w.-]+)(\?v=[\w]+)?"/g, `$1?v=${id}"`);
+  fs.writeFileSync(mpath, m);
+}
 console.log("Stamped build " + id);

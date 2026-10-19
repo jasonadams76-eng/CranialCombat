@@ -53,6 +53,8 @@ js/game.js        host rules engine: players, timer, scoring, standings (no DOM,
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
 js/audio.js       music (recordings, with built-in fallback) and synthesized sound effects (Web Audio)
 assets/audio/     splash.mp3 and lobby.mp3
+assets/icons/     home-screen and tab icons made from assets/AppLogo.png
+manifest.webmanifest  the name, colors and icons Android uses when the game is added to the home screen
 js/fx.js          confetti and fireworks canvas
 js/ui.js          all screens and click handling
 js/main.js        wires UI, network and engine together
@@ -115,6 +117,10 @@ Questions come from two free services, and only the host's browser talks to them
 In Random mode the two sources alternate from round to round. If one is down or comes up short, the other fills in, and a question that already appeared in the same game is skipped. Categories with no match (Musicals, Gadgets and so on) use Open Trivia DB only. Edit `CONFIG.triviaApiUrl` or `T_SLUG` in `js/api.js` to change the mapping.
 
 This is a personal, non-commercial game. Thanks to both services for their free questions: please keep these credits if you share it, and check The Trivia API's terms before using the game commercially.
+
+## Home-screen icon
+
+The page has a web app manifest (`manifest.webmanifest`), so adding the game to an Android home screen (Chrome menu, **Install app** or **Add to Home screen**) uses the Cranial Combat logo and the name "Cranial Combat", and opens full screen like an app. The icons in `assets/icons/` are cut from `assets/AppLogo.png`: 192 and 512 px with rounded transparent corners, a 512 px "maskable" version with extra margin so Android's circle or rounded-square crop never clips the lettering, an Apple touch icon (180 px) and the browser-tab icon (48 px). To change the icon, replace the images (keep the names), run `node tools/stamp.js` and push. Android keeps the old icon on a shortcut that already exists, so remove it and add the game again to see a new one.
 
 ## Sound
 
