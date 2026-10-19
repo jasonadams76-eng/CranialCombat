@@ -16,12 +16,20 @@ A multiplayer browser trivia game powered by the [Open Trivia DB](https://opentd
 
 A perfect game scores exactly **1000** points.
 
-- Each question has a **20 second** timer. It ends early once everyone has answered. No answer scores 0.
+- Each question has a **20 second** timer. Tap an answer to pick it, and **tap another to change it**. The question locks when every player has picked, or when the timer runs out, and your last pick counts. No answer scores 0.
 - When a question ends, everyone sees whether they were right, the correct answer and their own score. There are no standings after a question.
 - Everyone then presses **Ready**. The next question starts as soon as every player has. The host also has **Continue anyway** if someone has wandered off. A player who leaves does not hold the game up.
 - After each round there is a **round scoreboard**. Rows are revealed one at a time, from last place up to first (tap the board to show it all at once). Everyone presses Ready to start the next round.
 - **Final Standings** reveals the winner with confetti, fireworks and sound effects (ties share the banner). Then choose **Return to Lobby** or **Exit Game**. The host returning to the lobby brings everyone back; players wait for the host.
 - Up to 8 players.
+
+### Solo
+
+Press **Solo** on the main screen to play a full game on your own: pick a name and a category and go, with no lobby and no code. The game runs entirely on your device (questions are still fetched from the internet). Pick an answer, change it if you like, then press **Lock in** (or let the timer end). At the end the buttons are **Play Again** and **Exit Game**.
+
+### Personal Top 10
+
+Every game, solo or multiplayer, adds the player's score to **their own Top 10** on the device they played on. After the final standings you see "You placed #N in your Top 10!" with your list, or how far you were from getting in. Press **My Top 10** on the main screen to see the list any time; people who share a device each have their own list (it is matched by name, ignoring capitals). Each row shows the score, category, whether it was Solo or Multiplayer, and the date. A score of 0 is not saved, and ties keep the earlier score ahead. The lists are kept in the browser's local storage, so clearing site data or using another device starts fresh.
 
 ## Running it
 
@@ -40,6 +48,7 @@ js/build.js       the build id, written by stamp.js
 js/config.js      rounds, points, timers, player limit, join-code settings
 js/api.js         question sources (Open Trivia DB and The Trivia API), session token, repeat tracking (host only)
 js/filter.js      name and chat filter (blocked words, disguises, links, reserved names)
+js/scores.js      personal Top 10, saved per player name in the browser
 js/game.js        host rules engine: players, timer, scoring, standings (no DOM, no network)
 js/net.js         PeerJS wrapper: host and join (knows nothing about the rules)
 js/audio.js       music (recordings, with built-in fallback) and synthesized sound effects (Web Audio)
@@ -121,9 +130,10 @@ To change the music, replace the MP3 files (keeping the names, or updating them 
 node tests/host-game.test.js
 node tests/filter.test.js
 node tests/api.test.js
+node tests/scores.test.js
 ```
 
-The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names and chat messages are blocked and that innocent ones (Scunthorpe, Dickinson, "this hit me", "1000000 points", and so on) are not. The engine tests also cover chat: filtering, the rate limit, history, and lobby-only. The third covers the question sources with fake network answers: session token reuse, expiry and reset, repeat tracking, category mapping and fallback both ways. No dependencies needed.
+The first covers lobby rules, scoring per round (and that a perfect game is exactly 1000), the timer, early close when everyone has answered, changing an answer until the question locks, solo mode locking, invalid or late answers, disconnects, ranking with ties, round breaks and play-again, plus the host-controlled pacing (nothing advances on its own after a question ends). The second checks that disguised bad names and chat messages are blocked and that innocent ones (Scunthorpe, Dickinson, "this hit me", "1000000 points", and so on) are not. The engine tests also cover chat: filtering, the rate limit, history, and lobby-only. The third covers the question sources with fake network answers: session token reuse, expiry and reset, repeat tracking, category mapping and fallback both ways. The fourth covers the personal Top 10: ranking, ties, the ten-score limit, separate lists per name and damaged storage. No dependencies needed.
 
 ## Notes and limits
 

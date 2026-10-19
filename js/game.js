@@ -8,6 +8,7 @@ const HostGame = (() => {
   function create(options) {
     const o = Object.assign({
       rounds: CONFIG.rounds,
+      solo: false,             // one player, no network: the question locks on lockIn() or the timer, not when everyone has answered
       maxPlayers: CONFIG.maxPlayers,
       maxNameLength: CONFIG.maxNameLength,
       questionMs: CONFIG.questionSeconds * 1000,
@@ -285,7 +286,10 @@ const HostGame = (() => {
       setTimer(closeQuestion, o.questionMs);
     }
 
+    // The question locks once every connected player has picked an answer (or when the timer ends).
+    // Until then a player can change their pick. In solo mode the one player locks in with lockIn().
     function checkAllAnswered() {
+      if (o.solo) return;
       const live = connected();
       if (live.length > 0 && live.every(p => cur.answers.has(p.id))) closeQuestion();
     }
@@ -293,11 +297,19 @@ const HostGame = (() => {
     function submitAnswer(playerId, questionId, choice) {
       if (phase !== "question" || !cur || questionId !== cur.id) return false;
       const p = find(playerId);
-      if (!p || !p.connected || cur.answers.has(playerId)) return false;
+      if (!p || !p.connected) return false;
       if (!Number.isInteger(choice) || choice < 0 || choice >= cur.question.answers.length) return false;
-      cur.answers.set(playerId, choice);
-      o.broadcast({ t: "progress", id: cur.id, answered: Array.from(cur.answers.keys()) });
+      const first = !cur.answers.has(playerId);
+      cur.answers.set(playerId, choice);                  // a later pick replaces the earlier one
+      if (first) o.broadcast({ t: "progress", id: cur.id, answered: Array.from(cur.answers.keys()) });
       checkAllAnswered();
+      return true;
+    }
+
+    // Solo only: the player is done changing their answer and wants the result now.
+    function lockIn(playerId, questionId) {
+      if (!o.solo || phase !== "question" || !cur || questionId !== cur.id || !cur.answers.has(playerId)) return false;
+      closeQuestion();
       return true;
     }
 
@@ -386,7 +398,7 @@ const HostGame = (() => {
     function destroy() { clearTimer(); }
 
     return {
-      addPlayer, removePlayer, touch, sweep, resync, ready, setMeta, lock, unlock, reset, begin, submitAnswer, next, chat, destroy,
+      addPlayer, removePlayer, touch, sweep, resync, ready, setMeta, lock, unlock, reset, begin, submitAnswer, lockIn, next, chat, destroy,
       getChat: () => chatLog.slice(),
       getPhase: () => phase,
       getPlayers: () => publicPlayers(),

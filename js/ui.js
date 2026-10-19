@@ -16,7 +16,7 @@ const UI = (() => {
   }
 
   // Which music plays on which screen. Other screens (questions, scoreboards) have none.
-  const MUSIC_FOR = { splash: "splash", landing: "splash", hostSetup: "splash", joinSetup: "splash", connecting: "splash", lobby: "lobby" };
+  const MUSIC_FOR = { splash: "splash", landing: "splash", hostSetup: "splash", joinSetup: "splash", soloSetup: "splash", top10: "splash", connecting: "splash", lobby: "lobby" };
   const reducedMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
 
   function show(name, html) {
@@ -67,12 +67,16 @@ const UI = (() => {
   function landing(h) {
     show("landing", `
       <h1>Cranial Combat<small>Trivia Showdown</small></h1>
-      <p class="muted">Host a game and share the code, or join a friend's game.</p>
+      <p class="muted">Host a game and share the code, join a friend's game, or play on your own.</p>
       <button class="primary" id="host">Host a Game</button>
       <button class="secondary" id="join">Join a Game</button>
+      <button class="secondary" id="solo">Solo</button>
+      <button class="link" id="mytop10">My Top 10</button>
       <p class="build">Build ${typeof BUILD === "undefined" ? "unknown" : esc(BUILD)}</p>`);
     $("host").onclick = h.onHost;
     $("join").onclick = h.onJoin;
+    $("solo").onclick = h.onSolo;
+    $("mytop10").onclick = h.onTop10;
   }
 
   function hostSetup(h) {
@@ -108,6 +112,79 @@ const UI = (() => {
     $("name").onkeydown = e => { if (e.key === "Enter") go(); };
     $("name").oninput = () => formError("");
     ($("code").value ? $("name") : $("code")).focus();
+  }
+
+  // h: { name, categories, error, onStart(name, categoryId), onBack }
+  function soloSetup(h) {
+    show("soloSetup", `
+      <h1>Solo</h1>
+      <p class="muted">Play a full game on your own. Your best scores are kept in your personal Top 10.</p>
+      <label for="name">Your name</label>
+      <input id="name" maxlength="${CONFIG.maxNameLength}" autocomplete="off" value="${esc(h.name || "")}">
+      <label for="solo-cat">Category</label>
+      <select id="solo-cat"></select>
+      <p class="form-error" id="form-error" role="alert">${esc(h.error || "")}</p>
+      <button class="primary" id="solo-start">Start Solo Game</button>
+      <button class="secondary" id="back">Back</button>`);
+    fillCategories($("solo-cat"), h.categories || [], null);
+    const go = () => h.onStart($("name").value, $("solo-cat").value);
+    $("solo-start").onclick = go;
+    $("back").onclick = h.onBack;
+    $("name").onkeydown = e => { if (e.key === "Enter") go(); };
+    $("name").oninput = () => formError("");
+    $("name").focus();
+  }
+
+  // The category list arrives after the screen is drawn; keep whatever was already picked.
+  function setCategories(list) {
+    const sel = $("solo-cat");
+    if (!sel) return;
+    const keep = sel.value;
+    fillCategories(sel, list, keep === "" ? null : keep);
+  }
+
+  const dateText = ms => { try { return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""; } catch (e) { return ""; } };
+
+  function top10Table(entries, highlight) {
+    return `<table class="standings top10-table"><thead><tr><th></th><th>Score</th><th>Category</th><th>Date</th></tr></thead><tbody>${entries.map((e, i) => `
+      <tr class="row ${i === highlight ? "me lead" : ""}">
+        <td class="rank">${medal(i + 1)}</td>
+        <td class="score">${e.score}</td>
+        <td class="name">${esc(e.category)}<span class="mode">${esc(e.mode)}</span></td>
+        <td class="muted">${esc(dateText(e.date))}</td>
+      </tr>`).join("")}</tbody></table>`;
+  }
+
+  // The "My Top 10" screen. h: { names, name, entries, onPick(name), onBack, onSolo }
+  function top10Screen(h) {
+    const chips = h.names.length > 1
+      ? `<div class="chips" role="group" aria-label="Player">${h.names.map(n => `<button type="button" class="chip${n === h.name ? " on" : ""}" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div>`
+      : "";
+    show("top10", `
+      <h1>My Top 10</h1>
+      ${chips}
+      ${h.entries.length
+        ? `<p class="muted center">${esc(h.name)}'s best games on this device</p>${top10Table(h.entries, -1)}`
+        : `<p class="muted center">No scores saved on this device yet. Finish a game and your best scores will show up here.</p>`}
+      <button class="primary" id="t10-solo">Play Solo</button>
+      <button class="secondary" id="back">Back</button>`);
+    app.querySelectorAll(".chip").forEach(b => { b.onclick = () => h.onPick(b.dataset.n); });
+    $("t10-solo").onclick = h.onSolo;
+    $("back").onclick = h.onBack;
+  }
+
+  // Shown under the final standings. r is the result of Scores.record().
+  function top10Panel(r, name) {
+    if (!r || r.skipped) return "";
+    if (r.rank) {
+      return `<section class="top10 placed" id="top10-panel">
+        <h2>${r.rank === 1 ? "New personal best!" : `You placed #${r.rank} in your Top 10!`}</h2>
+        ${top10Table(r.entries, r.rank - 1)}
+      </section>`;
+    }
+    return `<section class="top10" id="top10-panel">
+      <p class="muted center">Not in your Top 10 this time.${r.tenth != null ? ` You need more than ${r.tenth} to get in.` : ""} Your best is ${r.best}.</p>
+    </section>`;
   }
 
   // Inline message on the host / join forms.
@@ -269,7 +346,7 @@ const UI = (() => {
   }
 
   // ---------- question ----------
-  // msg: question message. ctx: { me, score, onAnswer(index) }
+  // msg: question message. ctx: { me, score, onAnswer(index), solo, onLock() }
   function question(msg, ctx) {
     show("question", `
       <div class="topbar">
@@ -284,33 +361,44 @@ const UI = (() => {
       <div class="answers" id="answers">
         ${msg.answers.map((a, i) => `<button data-i="${i}" data-k="${"ABCD"[i]}">${esc(a)}</button>`).join("")}
       </div>
+      ${ctx.solo ? `<button class="primary lock-in" id="lock-in" disabled>Lock in</button>` : ""}
       <div class="status" id="status"></div>`);
 
-    qState = { id: msg.id, answered: false, total: ctx.total };
+    qState = { id: msg.id, locked: false, picked: null, solo: !!ctx.solo, total: ctx.total };
     const buttons = Array.from(document.querySelectorAll("#answers button"));
-    const lockAll = () => buttons.forEach(b => { b.disabled = true; });
+    const lockAll = () => { qState.locked = true; buttons.forEach(b => { b.disabled = true; }); const l = $("lock-in"); if (l) l.disabled = true; };
+    const hint = ctx.solo
+      ? "Picked. You can change your answer, then press Lock in (or wait for the timer)."
+      : "Picked. You can change your answer until everyone has answered or time runs out.";
+    const mark = i => {
+      qState.picked = i;
+      buttons.forEach((b, k) => b.classList.toggle("picked", k === i));
+      const l = $("lock-in"); if (l) l.disabled = false;
+      $("status").textContent = hint;
+    };
 
-    // A player who came back mid-question: show an answer they already gave.
-    if (msg.picked !== undefined && msg.picked !== null && buttons[msg.picked]) {
-      qState.answered = true;
-      buttons[msg.picked].classList.add("picked");
-      lockAll();
-      $("status").textContent = "Answer locked in. Waiting for the others…";
-    }
+    // A player who came back mid-question: show the answer they already gave. They can still change it.
+    if (msg.picked !== undefined && msg.picked !== null && buttons[msg.picked]) mark(msg.picked);
 
     const shownAt = performance.now();
     buttons.forEach(b => {
       b.onclick = () => {
-        if (qState.answered) return;
+        if (qState.locked) return;
         // A double click on the host's Next button can land here: ignore clicks right after render.
         if (performance.now() - shownAt < CONFIG.answerGuardMs) return;
-        qState.answered = true;
-        b.classList.add("picked");
-        lockAll();
-        $("status").textContent = "Answer locked in. Waiting for the others…";
-        ctx.onAnswer(Number(b.dataset.i));
+        const i = Number(b.dataset.i);
+        if (qState.picked === i) return;                 // the same answer again: nothing to send
+        mark(i);
+        ctx.onAnswer(i);
       };
     });
+    const lock = $("lock-in");
+    if (lock) lock.onclick = () => {
+      if (qState.locked || qState.picked === null) return;
+      lockAll();
+      $("status").textContent = "Locked in…";
+      ctx.onLock();
+    };
 
     // Countdown bar. Time runs from the moment the question arrives here.
     const bar = $("bar");
@@ -326,8 +414,7 @@ const UI = (() => {
       if (secs) secs.textContent = left;
       const track = document.querySelector(".timer");
       if (track && left <= 5) track.classList.add("urgent");
-      if (left <= 0 && !qState.answered) {
-        qState.answered = true;
+      if (left <= 0 && !qState.locked) {
         lockAll();
         $("status").textContent = "⏰ Time's up!";
       }
@@ -336,8 +423,8 @@ const UI = (() => {
 
   function progress(msg, me, playerCount) {
     if (current !== "question" || !qState || qState.id !== msg.id) return;
-    if (msg.answered.includes(me)) {
-      $("status").textContent = `Answer locked in. ${msg.answered.length} of ${playerCount} answered…`;
+    if (!qState.solo && msg.answered.includes(me) && !qState.locked) {
+      $("status").textContent = `${msg.answered.length} of ${playerCount} answered. You can still change your answer.`;
     }
   }
 
@@ -526,7 +613,10 @@ const UI = (() => {
   // s: { me, isHost, onReturn, onExit }
   function gameOver(msg, s) {
     const top = msg.standings.filter(p => p.rank === 1);
-    const banner = top.length > 1
+    const myRow = msg.standings.find(p => p.id === s.me);
+    const banner = s.solo && myRow
+      ? `${esc(myRow.name)}: ${myRow.score} points`
+      : top.length > 1
       ? `It's a tie! ${top.map(p => esc(p.name)).join(" & ")}`
       : `${esc(top[0].name)} wins!`;
 
@@ -546,14 +636,16 @@ const UI = (() => {
         </table>
       </div>
       <p class="muted center small" id="skip-hint">Tap the scoreboard to skip the countdown.</p>
+      <div class="top10-area pending" id="top10-area">${top10Panel(s.top10, myRow && myRow.name)}</div>
       <div class="end-buttons pending" id="end-buttons">
-        <button class="primary" id="return">Return to Lobby</button>
+        <button class="primary" id="return">${esc(s.returnLabel || "Return to Lobby")}</button>
         <button class="secondary" id="exit">Exit Game</button>
       </div>`);
 
     const celebrate = () => {
       $("winner").classList.remove("pending");
       $("winner").classList.add("shown");
+      if (s.solo && myRow && myRow.score === 0) return;           // nothing to celebrate on a zero
       play("crash"); setTimeout(() => play("fanfare"), 120); setTimeout(() => play("applause"), 700);
       if (typeof Fx !== "undefined") {
         Fx.celebrate({ ms: CONFIG.celebrationMs, onLaunch: () => play("launch"), onBurst: () => { play("burst"); if (Math.random() < 0.5) play("crackle"); } });
@@ -561,6 +653,8 @@ const UI = (() => {
     };
     const done = () => {
       $("end-buttons").classList.remove("pending");
+      $("top10-area").classList.remove("pending");
+      if (s.top10 && s.top10.rank && !msg.resumed) play("ready");
       const hint = $("skip-hint"); if (hint) hint.remove();
     };
     // A player who came back after the reveal just sees the final table, with no replay.
@@ -583,7 +677,7 @@ const UI = (() => {
       $("exit-yes").onclick = s.onExit;
       $("exit-no").onclick = () => {
         $("end-buttons").innerHTML = `
-          <button class="primary" id="return">Return to Lobby</button>
+          <button class="primary" id="return">${esc(s.returnLabel || "Return to Lobby")}</button>
           <button class="secondary" id="exit">Exit Game</button>`;
         gameOverButtons(s);
       };
@@ -591,7 +685,7 @@ const UI = (() => {
   }
 
   return {
-    setup, splash, setArt, banner, readyUpdate, landing, hostSetup, joinSetup, formError, connecting, loading, message,
+    setup, splash, setArt, banner, readyUpdate, landing, soloSetup, setCategories, top10Screen, hostSetup, joinSetup, formError, connecting, loading, message,
     lobby, chatUpdate, chatError, question, progress, reveal, roundEnd, gameOver,
     isShowing: name => current === name,
   };

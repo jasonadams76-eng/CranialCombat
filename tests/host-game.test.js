@@ -148,14 +148,13 @@ test("question closes early when every connected player has answered", () => {
   assert.strictEqual(game.getPhase(), "reveal");
 });
 
-test("answers: only first counts, invalid / stale / late ones are ignored", () => {
+test("answers: invalid / stale / late ones are ignored", () => {
   const { game, last, timers } = setup();
   game.addPlayer("a", "A"); game.addPlayer("b", "B");
   game.lock("x"); game.begin(makeQuestions());
   const q = last("question");
   const right = q.answers.indexOf("right");
   assert.strictEqual(game.submitAnswer("a", q.id, right), true);
-  assert.strictEqual(game.submitAnswer("a", q.id, (right + 1) % 4), false);  // second answer
   assert.strictEqual(game.submitAnswer("b", q.id, 9), false);                // out of range
   assert.strictEqual(game.submitAnswer("b", q.id, "1"), false);              // not an integer
   assert.strictEqual(game.submitAnswer("b", q.id + 99, 0), false);           // wrong question id
@@ -163,6 +162,86 @@ test("answers: only first counts, invalid / stale / late ones are ignored", () =
   timers.advance(20000);
   assert.strictEqual(game.submitAnswer("b", q.id, 0), false);                // after time is up
   assert.strictEqual(last("reveal").results.find(r => r.id === "a").gained, 25);
+});
+
+test("answers can be changed until everyone has picked; the last pick locks the question", () => {
+  const { game, last, log } = setup();
+  game.addPlayer("a", "A"); game.addPlayer("b", "B"); game.addPlayer("c", "C");
+  game.lock("x"); game.begin(makeQuestions());
+  const q = last("question");
+  const right = q.answers.indexOf("right"), wrong = (right + 1) % 4;
+  game.submitAnswer("a", q.id, wrong);
+  game.submitAnswer("a", q.id, right);                                       // a changes their mind
+  assert.strictEqual(game.getPhase(), "question");
+  assert.strictEqual(log.filter(m => m.t === "progress").length, 1, "changing a pick does not count as a new answer");
+  game.submitAnswer("b", q.id, right);
+  game.submitAnswer("b", q.id, wrong);                                       // b ends on a wrong pick
+  assert.strictEqual(game.getPhase(), "question");
+  game.submitAnswer("a", q.id, wrong);                                       // a changes again, still open
+  game.submitAnswer("a", q.id, right);
+  game.submitAnswer("c", q.id, right);                                       // the last player picks: everything locks
+  assert.strictEqual(game.getPhase(), "reveal");
+  assert.strictEqual(game.submitAnswer("a", q.id, wrong), false, "no change after the lock");
+  const res = last("reveal").results;
+  assert.strictEqual(res.find(r => r.id === "a").correct, true);
+  assert.strictEqual(res.find(r => r.id === "b").correct, false);
+  assert.strictEqual(res.find(r => r.id === "c").correct, true);
+});
+
+test("a changed answer is what scores when the timer ends the question", () => {
+  const { game, last, timers } = setup();
+  game.addPlayer("a", "A"); game.addPlayer("b", "B");
+  game.lock("x"); game.begin(makeQuestions());
+  const q = last("question");
+  const right = q.answers.indexOf("right");
+  game.submitAnswer("a", q.id, (right + 1) % 4);
+  game.submitAnswer("a", q.id, right);
+  timers.advance(20000);
+  assert.strictEqual(last("reveal").results.find(r => r.id === "a").gained, 25);
+  assert.strictEqual(last("reveal").results.find(r => r.id === "b").choice, null);
+});
+
+test("a returning player is shown their latest pick", () => {
+  const { game, log } = setup({ send: (id, m) => sent.push([id, m]) });
+  const sent = [];
+  game.addPlayer("a", "A", "tokA"); game.addPlayer("b", "B");
+  game.lock("x"); game.begin(makeQuestions());
+  const q = log.filter(m => m.t === "question").pop();
+  game.submitAnswer("a", q.id, 2); game.submitAnswer("a", q.id, 3);
+  game.removePlayer("a"); game.addPlayer("a2", "A", "tokA"); game.resync("a2");
+  assert.strictEqual(sent.filter(([, m]) => m.t === "question").pop()[1].picked, 3);
+});
+
+test("solo: a pick does not end the question; lockIn or the timer does", () => {
+  const { game, last, timers } = setup({ solo: true });
+  game.addPlayer("host", "Solo");
+  game.lock("x"); game.begin(makeQuestions());
+  let q = last("question");
+  const right = q.answers.indexOf("right");
+  assert.strictEqual(game.lockIn("host", q.id), false, "nothing to lock before a pick");
+  game.submitAnswer("host", q.id, (right + 1) % 4);
+  assert.strictEqual(game.getPhase(), "question");
+  game.submitAnswer("host", q.id, right);                                    // changes the answer
+  assert.strictEqual(game.getPhase(), "question");
+  assert.strictEqual(game.lockIn("host", q.id + 9), false, "wrong question id");
+  assert.strictEqual(game.lockIn("host", q.id), true);
+  assert.strictEqual(game.getPhase(), "reveal");
+  assert.strictEqual(last("reveal").results[0].gained, 25);
+  game.ready("host");
+  q = last("question");
+  game.submitAnswer("host", q.id, 0);
+  timers.advance(20000);                                                     // no lock in: the timer closes it
+  assert.strictEqual(game.getPhase(), "reveal");
+});
+
+test("lockIn is refused outside solo mode", () => {
+  const { game, last } = setup();
+  game.addPlayer("a", "A"); game.addPlayer("b", "B");
+  game.lock("x"); game.begin(makeQuestions());
+  const q = last("question");
+  game.submitAnswer("a", q.id, 0);
+  assert.strictEqual(game.lockIn("a", q.id), false);
+  assert.strictEqual(game.getPhase(), "question");
 });
 
 test("disconnect mid-question: game does not wait for the player who left", () => {
@@ -530,7 +609,9 @@ test("mid-game: an answer given before the drop is kept and shown again", () => 
   game.submitAnswer("a", last("question").id, 2);
   game.addPlayer("a2", "Amy", "tokA"); game.resync("a2");
   assert.strictEqual(sentTo("a2", "question")[0].picked, 2);
-  assert.strictEqual(game.submitAnswer("a2", last("question").id, 0), false);   // can't answer twice
+  assert.strictEqual(game.submitAnswer("a2", last("question").id, 0), true);    // and can still change it while the question is open
+  game.resync("a2");
+  assert.strictEqual(sentTo("a2", "question").pop().picked, 0);
 });
 
 test("mid-game: catch-up on the standings, round scoreboard and final results screens", () => {

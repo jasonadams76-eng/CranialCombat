@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="build" content="2f99e3a8">
+  <meta name="build" content="9ca17d6b">
   <meta name="theme-color" content="#060a18">
   <title>Cranial Combat: Trivia Showdown</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%A0%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Russo+One&display=swap">
-  <link rel="stylesheet" href="css/styles.css?v=2f99e3a8">
+  <link rel="stylesheet" href="css/styles.css?v=9ca17d6b">
 </head>
 <body>
   <div class="backdrop" aria-hidden="true"></div>
@@ -20,16 +20,17 @@
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 
   <!-- Plain scripts (no modules). Order matters: each file uses globals from the ones before it. -->
-  <script src="js/build.js?v=2f99e3a8"></script>
-  <script src="js/config.js?v=2f99e3a8"></script>
-  <script src="js/api.js?v=2f99e3a8"></script>
-  <script src="js/filter.js?v=2f99e3a8"></script>
-  <script src="js/game.js?v=2f99e3a8"></script>
-  <script src="js/net.js?v=2f99e3a8"></script>
-  <script src="js/audio.js?v=2f99e3a8"></script>
-  <script src="js/fx.js?v=2f99e3a8"></script>
-  <script src="js/ui.js?v=2f99e3a8"></script>
-  <script src="js/main.js?v=2f99e3a8"></script>
+  <script src="js/build.js?v=9ca17d6b"></script>
+  <script src="js/config.js?v=9ca17d6b"></script>
+  <script src="js/api.js?v=9ca17d6b"></script>
+  <script src="js/filter.js?v=9ca17d6b"></script>
+  <script src="js/scores.js?v=9ca17d6b"></script>
+  <script src="js/game.js?v=9ca17d6b"></script>
+  <script src="js/net.js?v=9ca17d6b"></script>
+  <script src="js/audio.js?v=9ca17d6b"></script>
+  <script src="js/fx.js?v=9ca17d6b"></script>
+  <script src="js/ui.js?v=9ca17d6b"></script>
+  <script src="js/main.js?v=9ca17d6b"></script>
 
   <!-- Startup check. Lives in the page itself so it still runs when a cached script is old or missing. -->
   <script>
@@ -49,6 +50,7 @@
       if (typeof CONFIG === "undefined") missing.push("CONFIG");
       if (typeof Api === "undefined") missing.push("Api");
       if (typeof Filter === "undefined") missing.push("Filter");
+      if (typeof Scores === "undefined") missing.push("Scores");
       if (typeof HostGame === "undefined") missing.push("HostGame");
       if (typeof Net === "undefined") missing.push("Net");
       if (typeof Sound === "undefined") missing.push("Sound");

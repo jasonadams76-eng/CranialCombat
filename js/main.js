@@ -20,6 +20,9 @@ const App = {
   join: null,        // player: { code, name, token, attempts } so a dropped connection can be re-opened
   joined: false,     // player: the host has accepted us
   reconnecting: false,
+  solo: false,       // a one-player game on this device: the engine runs here with no network
+  soloName: null,
+  recorded: false,   // this game's score has been filed in the personal Top 10
   heard: 0,          // player: when the host last sent anything
   timers: {},        // beat, sweep, retry, probe
 };
@@ -79,7 +82,7 @@ function teardown() {
   Object.assign(App, {
     mode: null, me: null, net: null, engine: null, code: null, category: null,
     categories: [], players: [], chat: [], note: null, lastQuestion: null, myScore: 0,
-    join: null, joined: false, reconnecting: false, heard: 0,
+    join: null, joined: false, reconnecting: false, heard: 0, solo: false, soloName: null, recorded: false,
   });
 }
 
@@ -87,11 +90,65 @@ function teardown() {
 function home() {
   teardown();
   App.leaving = false;
-  UI.landing({ onHost: showHostSetup, onJoin: () => showJoinSetup("") });
+  UI.landing({ onHost: showHostSetup, onJoin: () => showJoinSetup(""), onSolo: () => showSoloSetup(), onTop10: () => showTop10() });
 }
 
 function showHostSetup() {
   UI.hostSetup({ name: savedName(), onCreate: startHosting, onBack: home });
+}
+
+// ---------- solo ----------
+function showSoloSetup(error) {
+  UI.soloSetup({ name: savedName(), categories: App.categories, error, onStart: startSolo, onBack: home });
+  if (!App.categories.length) {
+    Api.fetchCategories().then(list => { App.categories = list; UI.setCategories(list); }).catch(() => { /* Random still works */ });
+  }
+}
+
+function startSolo(rawName, categoryId) {
+  const checked = Filter.checkName(rawName, { maxLength: CONFIG.maxNameLength });
+  if (!checked.ok) { UI.formError(checked.message); return; }
+  store.set("tsName", checked.name);
+  const category = App.categories.find(c => String(c.id) === String(categoryId)) || null;   // null = random
+  beginSolo(checked.name, category);
+}
+
+// One game for one player. The rules engine runs right here and "broadcasts" straight to our own screen.
+async function beginSolo(name, category) {
+  const cats = App.categories;
+  teardown();
+  App.leaving = false;
+  App.categories = cats;
+  Object.assign(App, { mode: "host", me: "host", solo: true, soloName: name, category });
+  const eng = App.engine = HostGame.create({ solo: true, broadcast: handleMessage, send: (id, msg) => handleMessage(msg) });
+  acquireWake();
+  eng.addPlayer("host", name);
+  UI.loading("Fetching questions…");
+  try {
+    const rounds = await Api.fetchAllRounds(category ? category.id : null, i => {
+      if (App.engine === eng) UI.loading(`Fetching questions (${i + 1} of ${CONFIG.rounds.length})…`);
+    });
+    if (App.engine !== eng) return;                       // the player backed out while we were fetching
+    eng.begin(rounds);
+  } catch (err) {
+    if (App.engine !== eng) return;
+    teardown();
+    App.leaving = false;
+    App.categories = cats;
+    UI.message("Couldn't start the game", (err && err.message) || "Couldn't load questions. Please try again.",
+      "Try again", () => beginSolo(name, category), "Back", () => showSoloSetup());
+  }
+}
+
+// ---------- personal Top 10 ----------
+function showTop10(name) {
+  const names = Scores.names();
+  const saved = savedName();
+  const pick = name || names.find(n => n.toLowerCase() === saved.toLowerCase()) || names[0] || saved;
+  UI.top10Screen({
+    names, name: pick, entries: pick ? Scores.list(pick) : [],
+    onPick: showTop10, onBack: home, onSolo: () => showSoloSetup(),
+  });
 }
 
 function showJoinSetup(code, error) {
@@ -163,6 +220,7 @@ function handleMessage(msg) {
       App.code = msg.meta.code || App.code;
       App.note = msg.meta.note || null;
       if (App.mode === "client") App.category = msg.meta.category || null;
+      if (App.solo) break;                                     // no lobby in a solo game
       renderLobby();
       break;
     case "chat":
@@ -182,7 +240,8 @@ function handleMessage(msg) {
       break;
     case "question":
       App.lastQuestion = msg;
-      UI.question(msg, { me: App.me, score: App.myScore, onAnswer: sendAnswer });
+      if (msg.round === 1 && msg.qIndex === 1) App.recorded = false;     // a new game: its score has not been filed yet
+      UI.question(msg, { me: App.me, score: App.myScore, onAnswer: sendAnswer, solo: App.solo, onLock: sendLock });
       break;
     case "progress":
       UI.progress(msg, App.me, App.players.filter(p => p.connected).length);
@@ -196,18 +255,32 @@ function handleMessage(msg) {
     case "roundEnd":
       UI.roundEnd(msg, App.me, hostControls());
       break;
-    case "gameOver":
+    case "gameOver": {
       App.myScore = 0;
+      const me = msg.standings.find(p => p.id === App.me);
+      // File this game's score in the player's own Top 10 (once, even if the screen is shown again after a reconnect).
+      let top10 = null;
+      if (me && !App.recorded) {
+        App.recorded = true;
+        top10 = Scores.record(me.name, {
+          score: me.score, category: App.category ? App.category.name : "Random",
+          mode: App.solo ? "Solo" : "Multiplayer", date: Date.now(),
+        });
+      }
+      const soloName = App.soloName, soloCategory = App.category;
       UI.gameOver(msg, {
-        me: App.me, isHost: App.mode === "host",
+        me: App.me, isHost: App.mode === "host" && !App.solo, solo: App.solo, top10,
+        returnLabel: App.solo ? "Play Again" : null,
         // The host's button brings everyone back to the lobby. A player's button waits for that.
         onReturn: () => {
-          if (App.mode === "host") App.engine.reset();
+          if (App.solo) beginSolo(soloName, soloCategory);
+          else if (App.mode === "host") App.engine.reset();
           else UI.message("Back to the lobby", "Waiting for the host to bring everyone back to the lobby…", "Exit Game", home);
         },
         onExit: home,
       });
       break;
+    }
     case "error": {
       const code = App.code;
       teardown();
@@ -222,7 +295,7 @@ function handleMessage(msg) {
 // Everyone presses Ready to move on. The host's screen also has "Continue anyway".
 function hostControls() {
   return {
-    isHost: App.mode === "host",
+    isHost: App.mode === "host" && !App.solo,
     players: () => App.players,
     onReady: () => {
       if (App.mode === "host") App.engine.ready("host");
@@ -234,6 +307,10 @@ function hostControls() {
 
 function stopTimer(name) {
   clearInterval(App.timers[name]); clearTimeout(App.timers[name]); delete App.timers[name];
+}
+
+function sendLock() {                       // solo: "Lock in" ends the question now
+  if (App.solo && App.engine && App.lastQuestion) App.engine.lockIn("host", App.lastQuestion.id);
 }
 
 function sendAnswer(choice) {
